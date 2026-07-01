@@ -1,32 +1,21 @@
-*==============================================================================*
-*  控制变量扩充说明（本次更新）：由6个 -> 8个
-*  原6个：lnpgdp(ln人均GDP) lndensity(人口密度) urban(城镇化率)
-*          struc2(第二产业占比) gov(政府干预) tech(科技投入)
-*  新增2个：
-*    struc_adv  产业结构高级化(第三产业/第二产业)  —— 缺失已按定义(ter_gdp/sec_gdp)补全至全样本
-*    struc_upg  产业结构升级指数(Moore:1一+2二+3三，×100使量纲落于[1,3])
-*  说明：
-*    (1) 二者为"产业结构高级化+升级"经典组合，均非机制中介变量，与既有struc2冗余度最低；
-*    (2) 加入后核心DID系数稳健显著(约-0.102, t≈-3.9, p<0.01)，不改变已成文结论；
-*    (3) struc_adv自身显著(**)，struc_upg为标准结构控制(不显著，属正常)；
-*    (4) 机制检验H2a(引导转型，中介=ter_gdp)的控制集CA仍剔除全部结构类变量(struc2/struc_adv/struc_upg)，
-*        以避免"坏控制"(江艇,2022)；其余渠道用全控制集CF。
-*    (5) 数据请使用随附的 data_integrated.dta（已含 struc_adv 补全值与 struc_upg），另存为 data.dta 后运行。
-*==============================================================================*
 
+* ============================================================================
+* 控制变量由6个扩展为9个：新增 fin(金融发展水平) tele(信息化水平) wage(工资水平)
+* 数据文件：data_integrated.dta（新增变量置于 tech 之后，缺失值已按城市线性插值填补）
+* 基准逐步回归扩展为 m1-m10（m8:+fin, m9:+tele, m10:+wage）
+* ============================================================================
 clear all
 set more off
 cap mkdir results
 
-local DATA "data.dta"
+local DATA "data_integrated.dta"
 use "`DATA'", clear
 xtset city_code year
 
 ***描述性统计***（3 位小数）
-sum2docx lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg using results/Table1_DescStat.docx, replace stats(N mean(%9.3f) sd(%9.3f) min(%9.3f) median(%9.3f) max(%9.3f)) title("表1 描述性统计")
+sum2docx lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage using results/Table1_DescStat.docx, replace stats(N mean(%9.3f) sd(%9.3f) min(%9.3f) median(%9.3f) max(%9.3f)) title("表1 描述性统计")
 
 ***基准回归（逐步加入控制变量）***
-eststo clear
 eststo clear
 eststo m1: reghdfe lnpoco2 DID, a(city_code year) vce(r)
 estadd local cityfe "是"
@@ -49,13 +38,16 @@ estadd local yearfe "是"
 eststo m7: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-eststo m8: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv, a(city_code year) vce(r)
+eststo m8: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-eststo m9: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+eststo m9: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-esttab m1 m2 m3 m4 m5 m6 m7 m8 m9 using "results/基准回归.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) order(DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg) mtitles("(1)" "(2)" "(3)" "(4)" "(5)" "(6)" "(7)" "(8)" "(9)") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("基准回归结果（逐步加入控制变量，共8个控制变量）") addnotes("括号内为t值；* p<0.1, ** p<0.05, *** p<0.01" "控制变量：ln人均GDP、人口密度、城镇化率、二产占比、政府干预、科技投入、产业结构高级化、产业结构升级指数")
+eststo m10: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
+estadd local cityfe "是"
+estadd local yearfe "是"
+esttab m1 m2 m3 m4 m5 m6 m7 m8 m9 m10 using "results/基准回归.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) order(DID lnpgdp lndensity urban struc2 gov tech fin tele wage) mtitles("(1)" "(2)" "(3)" "(4)" "(5)" "(6)" "(7)" "(8)" "(9)" "(10)") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("基准回归结果") addnotes("括号内为t值；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 *==============================================================================*
@@ -72,7 +64,7 @@ forvalues k = 2/4 {
 forvalues k = 0/4 {
     gen lag`k' = (rel == `k')
 }
-reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 
 cap postclose es
 postfile es double(rel coef lo hi) using "results/_es_tmp.dta", replace
@@ -109,7 +101,7 @@ restore
 use "`DATA'", clear
 xtset city_code year
 
-reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 local true_b = _b[DID]
 local true_t = _b[DID]/_se[DID]
 di as result "真实DID系数 = " %9.3f `true_b' "   真实t值 = " %9.3f `true_t'
@@ -138,7 +130,7 @@ forvalues i = 1/500 {
         bysort city_code (year): replace _u2 = _u2[1]
         gen int _fyear = floor(`ymin' + _u2*(`ymax'-`ymin'+1))
         gen byte fake_DID = _ftreat * (year >= _fyear)
-        cap reghdfe lnpoco2 fake_DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+        cap reghdfe lnpoco2 fake_DID lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
         if _rc==0 post placebo (_b[fake_DID]) (_se[fake_DID]) (_b[fake_DID]/_se[fake_DID])
     }
     restore
@@ -175,16 +167,16 @@ graph export "results/图3_安慰剂检验.png", replace width(2400) height(1650
 *==============================================================================*
 use "`DATA'", clear
 xtset city_code year
-logit treat lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, nolog
+logit treat lnpgdp lndensity urban struc2 gov tech fin tele wage, nolog
 predict pscore, pr
-psmatch2 treat lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, outcome(lnpoco2) logit neighbor(1) caliper(0.05) common
+psmatch2 treat lnpgdp lndensity urban struc2 gov tech fin tele wage, outcome(lnpoco2) logit neighbor(1) caliper(0.05) common
 gen psm_sample = (_weight != . & _weight > 0)
-pstest lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, both
+pstest lnpgdp lndensity urban struc2 gov tech fin tele wage, both
 eststo clear
-eststo psm_did: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg if psm_sample==1, a(city_code year) vce(r)
+eststo psm_did: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage if psm_sample==1, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-esttab psm_did using "results/PSM_DID检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) keep(DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg) order(DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg) mtitles("PSM-DID") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("PSM-DID检验") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
+esttab psm_did using "results/PSM_DID检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) keep(DID lnpgdp lndensity urban struc2 gov tech fin tele wage) order(DID lnpgdp lndensity urban struc2 gov tech fin tele wage) mtitles("PSM-DID") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("PSM-DID检验") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 *==============================================================================*
@@ -195,7 +187,7 @@ xtset city_code year
 eststo clear
 
 *--- r1：更换被解释变量 lnpoco2 -> lnpoco2_so2 ---*
-eststo r1: reghdfe lnpoco2_so2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+eststo r1: reghdfe lnpoco2_so2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
@@ -204,7 +196,7 @@ gen byte lowcarbon = 0
 foreach c in 天津市 重庆市 深圳市 厦门市 杭州市 南昌市 贵阳市 保定市 北京市 上海市 石家庄市 秦皇岛市 晋城市 呼伦贝尔市 吉林市 苏州市 淮安市 镇江市 宁波市 温州市 池州市 南平市 景德镇市 赣州市 青岛市 武汉市 广州市 桂林市 广元市 遵义市 昆明市 延安市 金昌市 乌鲁木齐市 乌海市 沈阳市 大连市 朝阳市 南京市 常州市 嘉兴市 金华市 衢州市 合肥市 淮北市 黄山市 六安市 宣城市 三明市 吉安市 抚州市 济南市 烟台市 潍坊市 长沙市 株洲市 湘潭市 郴州市 中山市 柳州市 三亚市 成都市 玉溪市 普洱市 拉萨市 安康市 兰州市 西宁市 银川市 吴忠市 {
     replace lowcarbon = 1 if city=="`c'"
 }
-eststo r2: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg if lowcarbon==0, a(city_code year) vce(r)
+eststo r2: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage if lowcarbon==0, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
@@ -213,21 +205,21 @@ gen byte capital = 0
 foreach c in 北京市 上海市 天津市 重庆市 石家庄市 太原市 呼和浩特市 沈阳市 长春市 哈尔滨市 南京市 杭州市 合肥市 福州市 南昌市 济南市 郑州市 武汉市 长沙市 广州市 南宁市 海口市 成都市 贵阳市 昆明市 拉萨市 西安市 兰州市 西宁市 银川市 乌鲁木齐市 {
     replace capital = 1 if city=="`c'"
 }
-eststo r3: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg if capital==0, a(city_code year) vce(r)
+eststo r3: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech fin tele wage if capital==0, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
 *--- r4：控制变量整体滞后 1 期 ---*
-eststo r4: reghdfe lnpoco2 DID L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.struc_adv L.struc_upg, a(city_code year) vce(r)
+eststo r4: reghdfe lnpoco2 DID L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.fin L.tele L.wage, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
 *--- r5：核心解释变量 DID 滞后 1 期 ---*
-eststo r5: reghdfe lnpoco2 L.DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+eststo r5: reghdfe lnpoco2 L.DID lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
-esttab r1 r2 r3 r4 r5 using "results/稳健性检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) order(DID L.DID lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.struc_adv L.struc_upg) mtitles("更换Y(so2)" "剔除低碳试点" "剔除省会城市" "控制变量滞后1期" "DID滞后1期") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("稳健性检验结果") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
+esttab r1 r2 r3 r4 r5 using "results/稳健性检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) order(DID L.DID lnpgdp lndensity urban struc2 gov tech fin tele wage L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.fin L.tele L.wage) mtitles("更换Y(so2)" "剔除低碳试点" "剔除省会城市" "控制变量滞后1期" "DID滞后1期") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("稳健性检验结果") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 
@@ -263,26 +255,26 @@ label var lndid_cont "连续DID:ln(1+累计5A数量)"
 
 *--- 连续DID回归：水平 & 对数；同时报告稳健与城市聚类标准误（照实汇报）---*
 eststo clear
-eststo cd1: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+eststo cd1: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "稳健"
-eststo cd2: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(cl city_code)
+eststo cd2: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "城市聚类"
-eststo cd3: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(r)
+eststo cd3: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "稳健"
-eststo cd4: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg, a(city_code year) vce(cl city_code)
+eststo cd4: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech fin tele wage, a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "城市聚类"
 esttab cd1 cd2 cd3 cd4 using "results/连续DID_5A数量强度0624.rtf", replace ///
     b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    keep(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg) ///
-    order(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg) ///
+    keep(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech fin tele wage) ///
+    order(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech fin tele wage) ///
     mtitles("数量(水平)" "数量(水平)" "ln(1+数量)" "ln(1+数量)") ///
     stats(sevce cityfe yearfe N r2_a, fmt(%s %s %s %9.0f %9.3f) ///
           labels("标准误" "城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) ///
@@ -316,7 +308,7 @@ local L = 5
 local results "results/_es5_combined.dta"
 cap postclose ES5
 postfile ES5 str8 est double(rel coef lo hi) using "`results'", replace
-local CTRL "lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg"
+local CTRL "lnpgdp lndensity urban struc2 gov tech fin tele wage"
 
 *============================ (1) TWFE 事件研究 ============================*
 preserve
@@ -503,11 +495,11 @@ di as result "================ 全部完成：表格与图 见 results 文件夹
 clear all
 set more off
 cap mkdir results
-use "data.dta", clear
+use "data_integrated.dta", clear
 xtset city_code year
 
-local CF "lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg"
-local CA "lnpgdp lndensity urban gov tech"
+local CF "lnpgdp lndensity urban struc2 gov tech fin tele wage"
+local CA "lnpgdp lndensity urban gov tech fin tele wage"
 local CH `" "H2a引导转型 ter_gdp CA" "H2b协同枢纽 lnelec_gdp CF" "H2c波特效应 lnpatapp CF" "H2d倒逼治理 er CF" "'
 
 *==============================================================================*
@@ -590,10 +582,10 @@ di as result _n "================ 机制检验完成：三步法表见 results �
 clear all
 set more off
 cap mkdir results
-use "data.dta", clear
+use "data_integrated.dta", clear
 xtset city_code year
 
-local CTRL "lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg"
+local CTRL "lnpgdp lndensity urban struc2 gov tech fin tele wage"
 
 *------------------------------------------------------------------------------*
 * ① 地理区位异质性：东部 / 中部 / 西部（分样本回归，一表三列）
@@ -692,7 +684,7 @@ eststo clear
 *   did_nat=自然类城市政策实施后；did_cul=人文类城市政策实施后；基准组=从未获评城市
 *------------------------------------------------------------------------------*
 * 单个5A城市、多个5A城市，各与"从未获评(grp5a==0)"城市对比
-local CTRL "lnpgdp lndensity urban struc2 gov tech struc_adv struc_upg"
+local CTRL "lnpgdp lndensity urban struc2 gov tech fin tele wage"
 eststo clear
 eststo h4s: reghdfe lnpoco2 DID `CTRL' if inlist(grp5a,1,0), a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
