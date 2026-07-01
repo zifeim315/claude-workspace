@@ -9,11 +9,10 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
 ***描述性统计***（3 位小数）
-sum2docx lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin using results/Table1_DescStat.docx, replace stats(N mean(%9.3f) sd(%9.3f) min(%9.3f) median(%9.3f) max(%9.3f)) title("表1 描述性统计")
+sum2docx lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin using results/Table1_DescStat.docx, replace stats(N mean(%9.3f) sd(%9.3f) min(%9.3f) median(%9.3f) max(%9.3f)) title("表1 描述性统计")
 
 ***基准回归（逐步加入控制变量）***
 eststo clear
@@ -38,16 +37,13 @@ estadd local yearfe "是"
 eststo m7: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-eststo m8: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open, a(city_code year) vce(r)
+eststo m8: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-eststo m9: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human, a(city_code year) vce(r)
+eststo m9: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-eststo m10: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
-estadd local cityfe "是"
-estadd local yearfe "是"
-esttab m1 m2 m3 m4 m5 m6 m7 m8 m9 m10 using "results/基准回归.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) order(DID lnpgdp lndensity urban struc2 gov tech open human lnfin) mtitles("(1)" "(2)" "(3)" "(4)" "(5)" "(6)" "(7)" "(8)" "(9)" "(10)") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("基准回归结果") addnotes("括号内为t值；* p<0.1, ** p<0.05, *** p<0.01")
+esttab m1 m2 m3 m4 m5 m6 m7 m8 m9 using "results/基准回归.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) order(DID lnpgdp lndensity urban struc2 gov tech human lnfin) mtitles("(1)" "(2)" "(3)" "(4)" "(5)" "(6)" "(7)" "(8)" "(9)") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("基准回归结果") addnotes("括号内为t值；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 *==============================================================================*
@@ -58,7 +54,6 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 gen rel = year - action
 replace rel = -4 if rel < -4
@@ -69,7 +64,7 @@ forvalues k = 2/4 {
 forvalues k = 0/4 {
     gen lag`k' = (rel == `k')
 }
-reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 
 cap postclose es
 postfile es double(rel coef lo hi) using "results/_es_tmp.dta", replace
@@ -108,10 +103,9 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
-reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 local true_b = _b[DID]
 local true_t = _b[DID]/_se[DID]
 di as result "真实DID系数 = " %9.3f `true_b' "   真实t值 = " %9.3f `true_t'
@@ -140,7 +134,7 @@ forvalues i = 1/500 {
         bysort city_code (year): replace _u2 = _u2[1]
         gen int _fyear = floor(`ymin' + _u2*(`ymax'-`ymin'+1))
         gen byte fake_DID = _ftreat * (year >= _fyear)
-        cap reghdfe lnpoco2 fake_DID lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+        cap reghdfe lnpoco2 fake_DID lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
         if _rc==0 post placebo (_b[fake_DID]) (_se[fake_DID]) (_b[fake_DID]/_se[fake_DID])
     }
     restore
@@ -180,18 +174,17 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
-logit treat lnpgdp lndensity urban struc2 gov tech open human lnfin, nolog
+logit treat lnpgdp lndensity urban struc2 gov tech human lnfin, nolog
 predict pscore, pr
-psmatch2 treat lnpgdp lndensity urban struc2 gov tech open human lnfin, outcome(lnpoco2) logit neighbor(1) caliper(0.05) common
+psmatch2 treat lnpgdp lndensity urban struc2 gov tech human lnfin, outcome(lnpoco2) logit neighbor(1) caliper(0.05) common
 gen psm_sample = (_weight != . & _weight > 0)
-pstest lnpgdp lndensity urban struc2 gov tech open human lnfin, both
+pstest lnpgdp lndensity urban struc2 gov tech human lnfin, both
 eststo clear
-eststo psm_did: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin if psm_sample==1, a(city_code year) vce(r)
+eststo psm_did: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin if psm_sample==1, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
-esttab psm_did using "results/PSM_DID检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) keep(DID lnpgdp lndensity urban struc2 gov tech open human lnfin) order(DID lnpgdp lndensity urban struc2 gov tech open human lnfin) mtitles("PSM-DID") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("PSM-DID检验") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
+esttab psm_did using "results/PSM_DID检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) keep(DID lnpgdp lndensity urban struc2 gov tech human lnfin) order(DID lnpgdp lndensity urban struc2 gov tech human lnfin) mtitles("PSM-DID") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("PSM-DID检验") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 *==============================================================================*
@@ -202,12 +195,11 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 eststo clear
 
 *--- r1：更换被解释变量 lnpoco2 -> lnpoco2_so2 ---*
-eststo r1: reghdfe lnpoco2_so2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+eststo r1: reghdfe lnpoco2_so2 DID lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
@@ -216,7 +208,7 @@ gen byte lowcarbon = 0
 foreach c in 天津市 重庆市 深圳市 厦门市 杭州市 南昌市 贵阳市 保定市 北京市 上海市 石家庄市 秦皇岛市 晋城市 呼伦贝尔市 吉林市 苏州市 淮安市 镇江市 宁波市 温州市 池州市 南平市 景德镇市 赣州市 青岛市 武汉市 广州市 桂林市 广元市 遵义市 昆明市 延安市 金昌市 乌鲁木齐市 乌海市 沈阳市 大连市 朝阳市 南京市 常州市 嘉兴市 金华市 衢州市 合肥市 淮北市 黄山市 六安市 宣城市 三明市 吉安市 抚州市 济南市 烟台市 潍坊市 长沙市 株洲市 湘潭市 郴州市 中山市 柳州市 三亚市 成都市 玉溪市 普洱市 拉萨市 安康市 兰州市 西宁市 银川市 吴忠市 {
     replace lowcarbon = 1 if city=="`c'"
 }
-eststo r2: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin if lowcarbon==0, a(city_code year) vce(r)
+eststo r2: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin if lowcarbon==0, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
@@ -225,21 +217,21 @@ gen byte capital = 0
 foreach c in 北京市 上海市 天津市 重庆市 石家庄市 太原市 呼和浩特市 沈阳市 长春市 哈尔滨市 南京市 杭州市 合肥市 福州市 南昌市 济南市 郑州市 武汉市 长沙市 广州市 南宁市 海口市 成都市 贵阳市 昆明市 拉萨市 西安市 兰州市 西宁市 银川市 乌鲁木齐市 {
     replace capital = 1 if city=="`c'"
 }
-eststo r3: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech open human lnfin if capital==0, a(city_code year) vce(r)
+eststo r3: reghdfe lnpoco2 DID lnpgdp lndensity urban struc2 gov tech human lnfin if capital==0, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
 *--- r4：控制变量整体滞后 1 期 ---*
-eststo r4: reghdfe lnpoco2 DID L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.open L.human L.lnfin, a(city_code year) vce(r)
+eststo r4: reghdfe lnpoco2 DID L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.human L.lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
 *--- r5：核心解释变量 DID 滞后 1 期 ---*
-eststo r5: reghdfe lnpoco2 L.DID lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+eststo r5: reghdfe lnpoco2 L.DID lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 
-esttab r1 r2 r3 r4 r5 using "results/稳健性检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) order(DID L.DID lnpgdp lndensity urban struc2 gov tech open human lnfin L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.open L.human L.lnfin) mtitles("更换Y(so2)" "剔除低碳试点" "剔除省会城市" "控制变量滞后1期" "DID滞后1期") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("稳健性检验结果") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
+esttab r1 r2 r3 r4 r5 using "results/稳健性检验0624.rtf", replace b(%9.3f) t(%9.3f) star(* 0.10 ** 0.05 *** 0.01) order(DID L.DID lnpgdp lndensity urban struc2 gov tech human lnfin L.lnpgdp L.lndensity L.urban L.struc2 L.gov L.tech L.human L.lnfin) mtitles("更换Y(so2)" "剔除低碳试点" "剔除省会城市" "控制变量滞后1期" "DID滞后1期") stats(cityfe yearfe N r2_a, fmt(%s %s %9.0f %9.3f) labels("城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) nogaps compress title("稳健性检验结果") addnotes("括号内为t值，城市层面稳健标准误；* p<0.1, ** p<0.05, *** p<0.01")
 eststo clear
 
 
@@ -260,7 +252,6 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
 *--- (可选) 并入真实逐年新增5A数量：你的数量面板需含 city_code year num5a_new_real ---*
@@ -280,26 +271,26 @@ label var lndid_cont "连续DID:ln(1+累计5A数量)"
 
 *--- 连续DID回归：水平 & 对数；同时报告稳健与城市聚类标准误（照实汇报）---*
 eststo clear
-eststo cd1: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+eststo cd1: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "稳健"
-eststo cd2: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(cl city_code)
+eststo cd2: reghdfe lnpoco2 did_cont   lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "城市聚类"
-eststo cd3: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(r)
+eststo cd3: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(r)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "稳健"
-eststo cd4: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech open human lnfin, a(city_code year) vce(cl city_code)
+eststo cd4: reghdfe lnpoco2 lndid_cont lnpgdp lndensity urban struc2 gov tech human lnfin, a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
 estadd local yearfe "是"
 estadd local sevce "城市聚类"
 esttab cd1 cd2 cd3 cd4 using "results/连续DID_5A数量强度0624.rtf", replace ///
     b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    keep(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech open human lnfin) ///
-    order(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech open human lnfin) ///
+    keep(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech human lnfin) ///
+    order(did_cont lndid_cont lnpgdp lndensity urban struc2 gov tech human lnfin) ///
     mtitles("数量(水平)" "数量(水平)" "ln(1+数量)" "ln(1+数量)") ///
     stats(sevce cityfe yearfe N r2_a, fmt(%s %s %s %9.0f %9.3f) ///
           labels("标准误" "城市固定效应" "年份固定效应" "观测值N" "Adj. R2")) ///
@@ -323,7 +314,6 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
 *--- 构造 cohort 变量 gvar：处理城市=首次获评年；从未获评/样本期外(2024)=0 ---*
@@ -338,7 +328,7 @@ local L = 5
 local results "results/_es5_combined.dta"
 cap postclose ES5
 postfile ES5 str8 est double(rel coef lo hi) using "`results'", replace
-local CTRL "lnpgdp lndensity urban struc2 gov tech open human lnfin"
+local CTRL "lnpgdp lndensity urban struc2 gov tech human lnfin"
 
 *============================ (1) TWFE 事件研究 ============================*
 preserve
@@ -530,11 +520,10 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
-local CF "lnpgdp lndensity urban struc2 gov tech open human lnfin"
-local CA "lnpgdp lndensity urban gov tech open human lnfin"
+local CF "lnpgdp lndensity urban struc2 gov tech human lnfin"
+local CA "lnpgdp lndensity urban gov tech human lnfin"
 local CH `" "H2a引导转型 ter_gdp CA" "H2b协同枢纽 lnelec_gdp CF" "H2c波特效应 lnpatapp CF" "H2d倒逼治理 er CF" "'
 
 *==============================================================================*
@@ -622,10 +611,9 @@ xtset city_code year
 cap drop lnfin
 gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
-cap label var open  "对外开放水平(进出口额/GDP)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
 
-local CTRL "lnpgdp lndensity urban struc2 gov tech open human lnfin"
+local CTRL "lnpgdp lndensity urban struc2 gov tech human lnfin"
 
 *------------------------------------------------------------------------------*
 * ① 地理区位异质性：东部 / 中部 / 西部（分样本回归，一表三列）
@@ -724,7 +712,7 @@ eststo clear
 *   did_nat=自然类城市政策实施后；did_cul=人文类城市政策实施后；基准组=从未获评城市
 *------------------------------------------------------------------------------*
 * 单个5A城市、多个5A城市，各与"从未获评(grp5a==0)"城市对比
-local CTRL "lnpgdp lndensity urban struc2 gov tech open human lnfin"
+local CTRL "lnpgdp lndensity urban struc2 gov tech human lnfin"
 eststo clear
 eststo h4s: reghdfe lnpoco2 DID `CTRL' if inlist(grp5a,1,0), a(city_code year) vce(cl city_code)
 estadd local cityfe "是"
