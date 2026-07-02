@@ -59,13 +59,13 @@ end
 di as result "== 5 类空间权重矩阵已构造：Wadj Wgeo Wecon Wegw Wegn =="
 
 *------------------------------------------------------------------------------*
-* 1. 空间诊断：全局 Moran's I（5 矩阵×双向FE残差）+ 分年度 Moran's I 表
+* 1. 空间诊断：全局 Moran I（5 矩阵×双向FE残差）+ 分年度 Moran's I 表
 *    —— 全部用独立 mata 块，不放进 Stata 循环
 *------------------------------------------------------------------------------*
 sort year city_code
 cap drop _res
 qui reghdfe lnpoco2 DID $CTRL, a(city_code year) residuals(_res)
-* 1a 五矩阵全局 Moran's I（残差）：一个独立 mata 块
+* 1a 五矩阵全局 Moran I（残差）：一个独立 mata 块
 mata:
     e = st_data(.,"_res"); N=289; T=21
     Em = rowshape(e, T)'; Em = Em :- (J(N,1,1)*mean(Em)); den = sum(Em:*Em)
@@ -75,10 +75,8 @@ mata:
     st_numscalar("mI4", sum(Em:*(st_matrix("Wegw") *Em))/den)
     st_numscalar("mI5", sum(Em:*(st_matrix("Wegn")*Em))/den)
 end
-di as txt _n "== 全局 Moran's I（双向固定效应残差）=="
-di as txt "  Wadj="  as res %6.3f mI1 as txt "   Wgeo="  as res %6.3f mI2 ///
-   as txt "   Wecon=" as res %6.3f mI3 as txt "   Wegw=" as res %6.3f mI4 ///
-   as txt "   Wegn=" as res %6.3f mI5
+di as txt _n "== 全局 Moran I（双向固定效应残差）=="
+di as txt "  Wadj="  as res %6.3f mI1 as txt "   Wgeo="  as res %6.3f mI2 as txt "   Wecon=" as res %6.3f mI3 as txt "   Wegw=" as res %6.3f mI4 as txt "   Wegn=" as res %6.3f mI5
 drop _res
 
 * 1b 分年度 Moran's I + Z（主推 Wegw）：一个独立 mata 块（向量化跨年）
@@ -98,13 +96,11 @@ preserve
     rename (MORAN1 MORAN2 MORAN3) (year MoranI Zscore)
     gen Pvalue = 2*(1-normal(abs(Zscore)))
     format MoranI Zscore Pvalue %9.3f
-    di as txt _n "== 分年度全局 Moran's I（Wegw）=="
+    di as txt _n "== 分年度全局 Moran I（Wegw）=="
     list year MoranI Zscore Pvalue, sep(0) noobs
     cap export excel using "results/moran_by_year.xlsx", replace first(var)
     save "results/moran_by_year.dta", replace
-    twoway (connected MoranI year, msymbol(O) lcolor(black) mcolor(black)), ///
-        scheme(s1mono) ytitle("全局 Moran's I") xtitle("年份") ///
-        title("减污降碳全局空间自相关的时间演变")
+    twoway (connected MoranI year, msymbol(O) lcolor(black) mcolor(black)), scheme(s1mono) ytitle("全局 Moran I") xtitle("年份") title("减污降碳全局空间自相关的时间演变")
     graph export "results/fig_moran_trend.png", replace width(2000) height(1300)
 restore
 
@@ -119,11 +115,7 @@ eststo sdm_ind:  xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(ind)  ns
 estadd scalar rho = e(rho)
 eststo sdm_both: xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(both) nsim(200)
 estadd scalar rho = e(rho)
-esttab sdm_time sdm_ind sdm_both using "results/table_SDM_3FE.rtf", replace ///
-    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    mtitles("(1) Time FE" "(2) Individual FE" "(3) Two-way FE") ///
-    scalars("rho 空间自回归系数rho") stats(N, labels("观测值N")) ///
-    nogaps compress title("空间杜宾模型完整估计(W_egw)")
+esttab sdm_time sdm_ind sdm_both using "results/table_SDM_3FE.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) mtitles("(1) Time FE" "(2) Individual FE" "(3) Two-way FE") scalars("rho 空间自回归系数rho") stats(N, labels("观测值N")) nogaps compress title("空间杜宾模型完整估计(W_egw)")
 
 * Hausman（版本敏感，capture 包裹；失败回退非空间面板 Hausman）
 cap noisily {
@@ -150,11 +142,7 @@ foreach W in Wadj Wgeo Wecon Wegw Wegn {
     eststo m_`W': xsmle lnpoco2 DID $CTRL, model(sdm) wmat(`W') fe type(time) nsim(200)
     estadd scalar rho = e(rho)
 }
-esttab m_Wadj m_Wgeo m_Wecon m_Wegw m_Wegn using "results/table_SDM_5matrices.rtf", replace ///
-    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    mtitles("邻接" "地理" "经济" "经济地理权重" "经济地理嵌套") ///
-    scalars("rho rho") stats(N, labels("N")) nogaps compress ///
-    title("五类权重矩阵 SDM 完整估计(Time FE)")
+esttab m_Wadj m_Wgeo m_Wecon m_Wegw m_Wegn using "results/table_SDM_5matrices.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) mtitles("邻接" "地理" "经济" "经济地理权重" "经济地理嵌套") scalars("rho rho") stats(N, labels("N")) nogaps compress title("五类权重矩阵 SDM 完整估计(Time FE)")
 
 *------------------------------------------------------------------------------*
 * 4. 溢出范围：不同 km 距离阈值下的 SDM（Time FE）
@@ -182,10 +170,7 @@ foreach km in 150 200 250 300 350 400 450 500 {
 postclose PM
 preserve
     use "results/spillover_range.dta", clear
-    twoway (connected rho km, msymbol(O) lcolor(black) mcolor(black)), ///
-        yline(0,lpattern(dash) lcolor(gs9)) scheme(s1mono) ///
-        xtitle("地理距离阈值 (km)") ytitle("空间自回归系数 rho") ///
-        title("减污降碳空间溢出的地理衰减")
+    twoway (connected rho km, msymbol(O) lcolor(black) mcolor(black)), yline(0,lpattern(dash) lcolor(gs9)) scheme(s1mono) xtitle("地理距离阈值 (km)") ytitle("空间自回归系数 rho") title("减污降碳空间溢出的地理衰减")
     graph export "results/fig_distance_decay.png", replace width(2000) height(1300)
 restore
 
@@ -215,9 +200,7 @@ gen byte east = region=="东部"
 gen double DIDlo_east = DID*(1-east)
 gen double DIDhi_east = DID*east
 eststo reg_east: xsmle lnpoco2 DIDlo_east DIDhi_east $CTRL, model(sdm) wmat(Wegw) fe type(time) nsim(100)
-esttab reg_* using "results/table_regime_spillover.rtf", replace ///
-    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) nogaps compress ///
-    title("分区制异质性溢出(Time FE, W_egw)")
+esttab reg_* using "results/table_regime_spillover.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) nogaps compress title("分区制异质性溢出(Time FE, W_egw)")
 
 * (C) 控制组溢出污染检验（queen 邻接；独立 mata 块构造 spill）
 sort year city_code
@@ -231,9 +214,7 @@ end
 eststo clear
 eststo base_did:  reghdfe lnpoco2 DID $CTRL,       a(city_code year) vce(cluster city_code)
 eststo spill_did: reghdfe lnpoco2 DID spill $CTRL, a(city_code year) vce(cluster city_code)
-esttab base_did spill_did using "results/table_spillover_contamination.rtf", replace ///
-    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID spill) ///
-    mtitles("基准" "加溢出虚拟变量") nogaps compress title("控制组溢出污染检验")
+esttab base_did spill_did using "results/table_spillover_contamination.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID spill) mtitles("基准" "加溢出虚拟变量") nogaps compress title("控制组溢出污染检验")
 
 *------------------------------------------------------------------------------*
 * 6. Moran 散点图：2003 与 2023 年（主推 Wegw）
@@ -248,24 +229,18 @@ mata:
     st_numscalar("MI03", (z03'*(W*z03))/(z03'*z03))
     st_numscalar("MI23", (z23'*(W*z23))/(z23'*z23))
 end
+local mi03 : di %5.3f MI03
+local mi23 : di %5.3f MI23
 preserve
     clear
     svmat Z03
-    twoway (scatter Z032 Z031, mcolor(black) msize(small) msymbol(Oh)) ///
-           (lfit Z032 Z031, lcolor(black)), ///
-        yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) ///
-        scheme(s1mono) legend(off) xtitle("去均值 lnpoco2") ytitle("空间滞后 W·z") ///
-        title("Moran 散点图 2003 (Moran's I=" + string(`=MI03',"%5.3f") + ")")
+    twoway (scatter Z032 Z031, mcolor(black) msize(small) msymbol(Oh)) (lfit Z032 Z031, lcolor(black)), yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) scheme(s1mono) legend(off) xtitle("去均值 lnpoco2") ytitle("空间滞后 Wz") title("Moran 散点图 2003 (Moran I = `mi03')")
     graph export "results/fig_moran_2003.png", replace width(1600) height(1400)
 restore
 preserve
     clear
     svmat Z23
-    twoway (scatter Z232 Z231, mcolor(black) msize(small) msymbol(Oh)) ///
-           (lfit Z232 Z231, lcolor(black)), ///
-        yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) ///
-        scheme(s1mono) legend(off) xtitle("去均值 lnpoco2") ytitle("空间滞后 W·z") ///
-        title("Moran 散点图 2023 (Moran's I=" + string(`=MI23',"%5.3f") + ")")
+    twoway (scatter Z232 Z231, mcolor(black) msize(small) msymbol(Oh)) (lfit Z232 Z231, lcolor(black)), yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) scheme(s1mono) legend(off) xtitle("去均值 lnpoco2") ytitle("空间滞后 Wz") title("Moran 散点图 2023 (Moran I = `mi23')")
     graph export "results/fig_moran_2023.png", replace width(1600) height(1400)
 restore
 
