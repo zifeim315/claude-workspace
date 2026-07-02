@@ -60,16 +60,15 @@ mata:
     // 经济地理权重 0.5*Wgeo + 0.5*Wecon，再行标准化
     EW = 0.5:*Wgeo + 0.5:*Wecon
     rs = rowsum(EW); rs = rs + (rs:==0); Wegw = EW :/ rs
-    // 邻接：距离邻接 ≤163km；孤立城市取最近邻
-    A = (D:<=163) :* (D:>0)
-    for (i=1;i<=n;i++) {
-        if (rowsum(A[i,.])==0) {
-            dd = D[i,.]; dd[i] = .
-            mv = .; mi = .
-            for (j=1;j<=n;j++) if (j!=i & (mv==. | dd[j]<mv)) { mv = dd[j]; mi = j }
-            A[i,mi] = 1; A[mi,i] = 1
-        }
-    }
+    // 邻接：距离邻接 ≤163km；孤立城市取最近邻（全向量化，无循环/嵌套花括号）
+    A     = (D:<=163) :* (D:>0)
+    Dbig  = D + I(n):*1e12                       // 对角置为极大，排除自身
+    rmins = rowmin(Dbig)                         // 每行最近邻距离
+    NN    = (Dbig :== (rmins*J(1,n,1)))          // 最近邻位置指示矩阵
+    iso   = (rowsum(A):==0)                      // 孤立行指示
+    A     = A + NN:*(iso*J(1,n,1))               // 仅孤立行补最近邻
+    A     = A + A'                               // 对称化
+    A     = (A:>0)                               // 回到 0/1
     rs = rowsum(A); rs = rs + (rs:==0); Wadj = A :/ rs
     // 输出到 Stata 矩阵
     st_matrix("Wadj",  Wadj)
@@ -85,8 +84,8 @@ di as result "== 5 类空间权重矩阵已构造：Wadj Wgeo Wecon Wegw Wegn ==
 * 1. 空间诊断检验：全局 Moran's I（5 矩阵 × 双向FE残差）+ 分年度 Moran's I 表
 *------------------------------------------------------------------------------*
 sort year city_code
-qui reghdfe lnpoco2 DID $CTRL, a(city_code year) resid
-predict double _res, resid
+cap drop _res
+qui reghdfe lnpoco2 DID $CTRL, a(city_code year) residuals(_res)
 di as txt _n "== 全局 Moran's I（双向固定效应残差）=="
 foreach W in Wadj Wgeo Wecon Wegw Wegn {
     mata:
@@ -189,14 +188,14 @@ postfile PM int km double rho using "results/spillover_range.dta", replace
 foreach km in 150 200 250 300 350 400 450 500 {
     mata:
         Dm = st_matrix("Dmat"); n = rows(Dm)
-        Bk = (Dm:<=`km') :* (Dm:>0)
-        for (i=1;i<=n;i++) {
-            if (rowsum(Bk[i,.])==0) {
-                dd = Dm[i,.]; dd[i] = .; mv = .; mi = .
-                for (j=1;j<=n;j++) if (j!=i & (mv==.|dd[j]<mv)) { mv = dd[j]; mi = j }
-                Bk[i,mi] = 1
-            }
-        }
+        Bk    = (Dm:<=`km') :* (Dm:>0)
+        Dbig  = Dm + I(n):*1e12
+        rmins = rowmin(Dbig)
+        NN    = (Dbig :== (rmins*J(1,n,1)))
+        iso   = (rowsum(Bk):==0)
+        Bk    = Bk + NN:*(iso*J(1,n,1))
+        Bk    = Bk + Bk'
+        Bk    = (Bk:>0)
         rs = rowsum(Bk); rs = rs + (rs:==0); st_matrix("Wk", Bk:/rs)
     end
     qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wk) fe type(time) nsim(1)
