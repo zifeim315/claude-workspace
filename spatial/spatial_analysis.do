@@ -192,12 +192,14 @@ restore
 *------------------------------------------------------------------------------*
 * 5. 门槛/分段异质性溢出
 *------------------------------------------------------------------------------*
-* (A) Hansen 面板门槛（版本敏感，capture 包裹）
-cap noisily xthreg lnpoco2 DID $CTRL, rx(DID) qx(lnpgdp) thnum(2) trim(0.01 0.01) grid(300) bs(300 300)
+* (A) Hansen 面板门槛（版本敏感；失败不影响后续，分段异质性以下方(B)分区制SDM为准）
+xtset city_code year
+cap noisily xthreg lnpoco2 DID $CTRL, rx(DID) qx(lnpgdp) thnum(1) trim(0.05) grid(100) bs(300)
+if _rc di as txt "xthreg 门槛模型在本机未成功(版本/共形问题)，分段异质性结果见下方分区制SDM。"
 
 * (B) 分区制 SDM（各维度分高/低，Time FE）—— Stata 循环内无 mata
 eststo clear
-foreach v of newlist human lnpgdp ter_gdp er {
+foreach v in human lnpgdp ter_gdp er {
     capture confirm variable `v'
     if _rc continue
     cap drop hi_`v' DIDlo_`v' DIDhi_`v' mm_`v'
