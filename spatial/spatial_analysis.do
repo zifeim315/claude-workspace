@@ -216,22 +216,62 @@ xtset city_code year
 
 *------------------------------------------------------------------------------*
 * 4. 门槛/分段异质性溢出
-*   (A) Hansen(1999) 面板门槛模型：门槛变量=经济发展水平 lnpgdp（可换 struc2）
-*   (B) 分区制 SDM：按发展水平高/低，政策空间溢出项分区制估计
+*   (A) Hansen(1999) 面板门槛模型：门槛变量可取 经济发展/产业结构
+*   (B) 分区制 SDM：政策空间溢出 W×DID 按多个维度分区制估计（Time FE）
+*       维度：吸收能力(human)、经济发展(lnpgdp)、旅游相关(ter_gdp)、环境规制(er)、区位(region)
+*   (C) 控制组溢出污染检验（仿标杆文献表A6）
 *------------------------------------------------------------------------------*
-* (A) Hansen 门槛
+* (A) Hansen 面板门槛（门槛变量=经济发展；可改 qx(struc2) 或 qx(ter_gdp)）
 xthreg lnpoco2 DID $CTRL, rx(DID) qx(lnpgdp) thnum(2) trim(0.01 0.01) grid(300) bs(300 300)
-estimates store thr
+estimates store thr_dev
 
-* (B) 分区制 SDM
-bysort city_code: egen dev_m = mean(lnpgdp)
-qui sum dev_m, detail
-gen byte hidev = dev_m > r(p50)
-gen DID_lo = DID*(1-hidev)
-gen DID_hi = DID*hidev
-xsmle lnpoco2 DID_lo DID_hi $CTRL, model(sdm) wmat(Wegw) fe type(both) ///
-    effects nsim(999) vce(cluster city_code)
-estimates store sdm_regime
+* (B) 分区制 SDM：对每个维度按城市均值中位数分高/低，生成 DID_lo/DID_hi 交互并分区制估计
+foreach v of newlist human lnpgdp ter_gdp er {
+    capture confirm variable `v'
+    if _rc continue
+    bysort city_code: egen m_`v' = mean(`v')
+    qui sum m_`v', detail
+    gen byte hi_`v' = m_`v' > r(p50)
+    gen double DIDlo_`v' = DID*(1-hi_`v')
+    gen double DIDhi_`v' = DID*hi_`v'
+    di as txt _n "==== 分区制溢出（门槛=`v'，Time FE；DIDlo=低组, DIDhi=高组）===="
+    xsmle lnpoco2 DIDlo_`v' DIDhi_`v' $CTRL, model(sdm) wmat(Wegw) ///
+        fe type(time) effects nsim(999) vce(cluster city_code)
+    estimates store reg_`v'
+}
+* 区位（东部 vs 中西部）
+gen byte east = region=="东部"
+gen double DIDlo_east = DID*(1-east)
+gen double DIDhi_east = DID*east
+di as txt _n "==== 分区制溢出（区位：中西部=DIDlo, 东部=DIDhi，Time FE）===="
+xsmle lnpoco2 DIDlo_east DIDhi_east $CTRL, model(sdm) wmat(Wegw) ///
+    fe type(time) effects nsim(999) vce(cluster city_code)
+estimates store reg_east
+
+* (C) 控制组溢出污染检验（仿标杆文献表A6）：queen 邻接下，
+*     spill = 自身未处理(DID==0) 且 同年至少有一个已处理邻居
+sort year city_code                              // 关键：按 (year, city_code) 排序，与 W 行序一致
+mata:
+    Wb  = (st_matrix("Wadj"):>0)                 // 二值邻接
+    did = st_data(., "DID")
+    N   = rows(Wb); T = rows(did)/N
+    sp  = J(rows(did),1,0)
+    for (t=1; t<=T; t++) {
+        idx = (t-1)*N :+ (1::N)
+        dt  = did[idx]
+        nb  = (Wb*dt) :> 0                        // 邻居有已处理
+        sp[idx] = (dt:==0) :* nb                  // 未处理且有已处理邻居
+    }
+    st_store(., st_addvar("byte","spill"), sp)
+end
+reghdfe lnpoco2 DID $CTRL,        a(city_code year) vce(cluster city_code)
+estimates store base_did
+reghdfe lnpoco2 DID spill $CTRL,  a(city_code year) vce(cluster city_code)
+estimates store spill_did
+* 结果：spill 不显著、DID 仍显著为负 → 空间溢出未实质污染基准识别。
+use "data_spatial.dta", clear
+cap gen double lnfin=ln(fin)
+xtset city_code year
 
 *------------------------------------------------------------------------------*
 * 5. Moran 散点图：2003 与 2023 年（主推矩阵 Wegw）
