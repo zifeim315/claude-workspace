@@ -70,7 +70,7 @@ def sdm_ml_fe(y, X, W, cid, tid, fe='twoway', durbin=True, eig=None):
     if durbin:
         WX=np.column_stack([wlag(X[:,j]) for j in range(X.shape[1])]); Z=np.column_stack([X,WX])
     else: Z=X
-    dm=(lambda M: twoway_demean(M,cid,tid)) if fe=='twoway' else (lambda M: oneway_demean(M,cid))
+    dm=(lambda M: twoway_demean(M,cid,tid)) if fe=='twoway' else ((lambda M: oneway_demean(M,tid)) if fe=='time' else (lambda M: oneway_demean(M,cid)))
     yt=dm(y); Wyt=dm(Wy); Zt=dm(Z)
     def negll(rho):
         e=yt-rho*Wyt; b,_,_,_=np.linalg.lstsq(Zt,e,rcond=None); r=e-Zt@b; s2=(r@r)/NT
