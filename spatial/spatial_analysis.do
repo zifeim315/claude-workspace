@@ -1,306 +1,247 @@
 *==============================================================================*
-*  国家5A级景区建设与城市减污降碳 —— 空间溢出效应（完整可复现脚本）
-*  一个 do + 一个 dta（data_spatial.dta，内含 lat lon mean_pgdp 用于在 Mata 现场
-*  构造全部空间权重矩阵，无需外部矩阵文件）。
+*  国家5A级景区建设、减污降碳与空间溢出效应 —— 完整可复现脚本
+*  一个 do + 一个 dta（data_spatial.dta 内含 lat lon mean_pgdp，Mata 现场构造全部
+*  空间权重矩阵）。所有结果统一输出到 results 文件夹。
 *
-*  内容：
-*    0. 读数据、生成变量、在 Mata 构造 5 个空间权重矩阵（289×289，行标准化）
-*    1. 空间诊断检验（Moran's I + LM-lag/RLM-lag/LM-err/RLM-err）×5矩阵×3种固定效应
-*    2. 空间杜宾模型 SDM：三列 (1)Time FE (2)Individual FE (3)Two-way FE
-*    3. 溢出范围：不同 km 距离权重下的 SAR/SDM（距离衰减）
-*    4. 门槛/分段异质性：Hansen 面板门槛(xthreg) + 分区制 SDM
-*    5. Moran 散点图：2003 与 2023 年
-*
-*  需安装： ssc install xsmle ;  ssc install xthreg
+*  需安装： ssc install xsmle ;  ssc install xthreg ;  ssc install estout
 *  运行前： cd "…/spatial"
-*  权重矩阵（均行标准化，按 city_code 升序）：
-*    Wadj 邻接(距离邻接≤163km) | Wgeo 地理距离(1/d^2) | Wecon 经济距离(1/|ΔȲ|)
-*    Wegw 经济地理权重(0.5·Wgeo+0.5·Wecon) | Wegn 经济地理嵌套((1/d^2)·Ȳ_j/Ȳ̄)
+*  五类矩阵（行标准化，按 city_code 升序）：
+*    Wadj 邻接(≤163km) | Wgeo 地理(1/d^2) | Wecon 经济(1/|ΔȲ|)
+*    Wegw 经济地理权重(0.5Wgeo+0.5Wecon) | Wegn 经济地理嵌套((1/d^2)·Ȳ_j/Ȳ̄)
 *==============================================================================*
 clear all
 set more off
-set matsize 1000
+set matsize 2000
+cap mkdir results
 
 use "data_spatial.dta", clear
 cap gen double lnfin = ln(fin)
 xtset city_code year
 global CTRL lnpgdp lndensity urban struc2 gov tech human lnfin
-global K = 9        // DID + 8 控制
 
 *------------------------------------------------------------------------------*
-* 0. 在 Mata 用经纬度与人均GDP均值构造 5 个空间权重矩阵
+* 0. 在 Mata 用经纬度与人均GDP均值构造 5 类空间权重矩阵
 *------------------------------------------------------------------------------*
 preserve
     bysort city_code (year): keep if _n==1
     sort city_code
-    mkmat lat,       matrix(LAT)
-    mkmat lon,       matrix(LON)
+    mkmat lat, matrix(LAT)
+    mkmat lon, matrix(LON)
     mkmat mean_pgdp, matrix(YBAR)
 restore
-
 mata:
-    LAT = st_matrix("LAT"):*(pi()/180)
-    LON = st_matrix("LON"):*(pi()/180)
-    Y   = st_matrix("YBAR")
-    n   = rows(LAT)
-    // 大圆(haversine)距离矩阵 D (km)
-    D = J(n,n,0)
-    for (i=1;i<=n;i++) {
-        for (j=1;j<=n;j++) {
-            dla = LAT[j]-LAT[i]; dlo = LON[j]-LON[i]
-            a   = sin(dla/2)^2 + cos(LAT[i])*cos(LAT[j])*sin(dlo/2)^2
-            D[i,j] = 2*6371*asin(sqrt(a))
-        }
+    LAT=st_matrix("LAT"):*(pi()/180); LON=st_matrix("LON"):*(pi()/180); Y=st_matrix("YBAR")
+    n=rows(LAT); D=J(n,n,0)
+    for(i=1;i<=n;i++) for(j=1;j<=n;j++){
+        dla=LAT[j]-LAT[i]; dlo=LON[j]-LON[i]
+        a=sin(dla/2)^2+cos(LAT[i])*cos(LAT[j])*sin(dlo/2)^2
+        D[i,j]=2*6371*asin(sqrt(a))
     }
-    // 行标准化函数
-    real matrix rowstd(real matrix W0) {
-        real matrix W; real colvector rs
-        W = W0; _diag(W,0); rs = rowsum(W); rs = rs + (rs:==0)
-        return(W :/ rs)
-    }
-    // 地理 1/d^2
-    G = J(n,n,0)
-    for (i=1;i<=n;i++) for (j=1;j<=n;j++) if (i!=j) G[i,j]=1/(D[i,j]^2)
-    Wgeo = rowstd(G)
-    // 经济距离 1/|ΔȲ|
-    E = J(n,n,0)
-    for (i=1;i<=n;i++) for (j=1;j<=n;j++) if (i!=j & Y[i]!=Y[j]) E[i,j]=1/abs(Y[i]-Y[j])
-    Wecon = rowstd(E)
-    // 经济地理嵌套：列按经济规模加权 (1/d^2)*(Ȳ_j/Ȳ̄)
-    Yr = Y :/ mean(Y)
-    EG = J(n,n,0)
-    for (i=1;i<=n;i++) for (j=1;j<=n;j++) if (i!=j) EG[i,j]=G[i,j]*Yr[j]
-    Wegn = rowstd(EG)
-    // 经济地理权重：标准化地理与经济的凸组合
-    Wegw = rowstd(0.5:*Wgeo + 0.5:*Wecon)
-    // 邻接：距离邻接 ≤163km（与真实一阶邻接密度≈5一致）；孤立城市取最近邻
-    A = (D:<=163) :* (D:>0)
-    for (i=1;i<=n;i++) {
-        if (rowsum(A[i,.])==0) {
-            di = D[i,.]; di[i]=.
-            minidx = .; minval=.
-            for (j=1;j<=n;j++) if (j!=i & (minval==. | di[j]<minval)) { minval=di[j]; minidx=j }
-            A[i,minidx]=1; A[minidx,i]=1
-        }
-    }
-    Wadj = rowstd(A)
-    // 输出到 Stata 矩阵
-    st_matrix("Wadj",  Wadj);  st_matrix("Wgeo", Wgeo); st_matrix("Wecon", Wecon)
-    st_matrix("Wegw",  Wegw);  st_matrix("Wegn", Wegn)
-    st_matrix("Dmat",  D)
+    real matrix rowstd(real matrix W0){ real matrix W; real colvector rs
+        W=W0; _diag(W,0); rs=rowsum(W); rs=rs+(rs:==0); return(W:/rs) }
+    G=J(n,n,0); for(i=1;i<=n;i++) for(j=1;j<=n;j++) if(i!=j) G[i,j]=1/(D[i,j]^2)
+    Wgeo=rowstd(G)
+    E=J(n,n,0); for(i=1;i<=n;i++) for(j=1;j<=n;j++) if(i!=j & Y[i]!=Y[j]) E[i,j]=1/abs(Y[i]-Y[j])
+    Wecon=rowstd(E)
+    Yr=Y:/mean(Y); EG=J(n,n,0); for(i=1;i<=n;i++) for(j=1;j<=n;j++) if(i!=j) EG[i,j]=G[i,j]*Yr[j]
+    Wegn=rowstd(EG)
+    Wegw=rowstd(0.5:*Wgeo+0.5:*Wecon)
+    A=(D:<=163):*(D:>0)
+    for(i=1;i<=n;i++) if(rowsum(A[i,.])==0){ di=D[i,.]; di[i]=.; mi=.; mv=.
+        for(j=1;j<=n;j++) if(j!=i & (mv==.|di[j]<mv)){mv=di[j]; mi=j}; A[i,mi]=1; A[mi,i]=1 }
+    Wadj=rowstd(A)
+    st_matrix("Wadj",Wadj); st_matrix("Wgeo",Wgeo); st_matrix("Wecon",Wecon)
+    st_matrix("Wegw",Wegw); st_matrix("Wegn",Wegn); st_matrix("Dmat",D)
 end
-di as result "== 已构造 5 个空间权重矩阵：Wadj Wgeo Wecon Wegw Wegn =="
+di as result "== 5 类空间权重矩阵已构造 =="
 
 *------------------------------------------------------------------------------*
-* 1. 空间诊断检验：全局 Moran's I（对 3 种固定效应残差 × 5 个矩阵）
-*    做法：reghdfe 取相应固定效应残差 → 逐年套用单期 W → 汇总 Moran's I。
-*    注：完整 LM 检验族(LM-lag/RLM-lag/LM-err/RLM-err)的权威数值见随附 doc 表1，
-*        由已验证的 spreg 例程计算；此处 Stata 侧给出主诊断量 Moran's I 及其经验 p 值。
+* 1. 空间诊断检验：全局 Moran's I（5 矩阵 × 双向FE残差）+ 分年度 Moran's I 表
 *------------------------------------------------------------------------------*
-capture mata: mata drop moranPanel()
+* Mata：面板 Moran's I（数据须按 year, city_code 排序）
+capture mata: mata drop moranP()
 mata:
-    // 面板 Moran's I：数据须按 (year, city_code) 排序；W 为单期 289×289 行标准化矩阵
-    void moranPanel(string scalar evar, string scalar wname, real scalar N, real scalar T) {
-        real matrix W; real colvector e, et, Wet
-        real scalar num, den, t, r, I, cnt, Ip
-        W = st_matrix(wname); e = st_data(., evar)
-        num = 0; den = 0
-        for (t=1; t<=T; t++) {
-            et  = e[((t-1)*N :+ (1::N))]
-            et  = et :- mean(et)
-            Wet = W*et
-            num = num + (et'Wet); den = den + (et'et)
-        }
-        I = num/den
-        // 经验 p 值：对每期做行内置换，累计 |I_perm|>=|I| 频率
-        cnt = 0
-        for (r=1; r<=499; r++) {
-            num=0; den=0
-            for (t=1;t<=T;t++){
-                et=e[((t-1)*N:+(1::N))]; et=et[jumble(1::N)]; et=et:-mean(et)
-                Wet=W*et; num=num+(et'Wet); den=den+(et'et)
-            }
-            if (abs(num/den) >= abs(I)) cnt = cnt + 1
-        }
-        Ip = (cnt+1)/500
-        st_numscalar("mI", I); st_numscalar("mP", Ip)
+    void moranP(string scalar ev, string scalar wn, real scalar N, real scalar T){
+        real matrix W; real colvector e,et,Wet; real scalar num,den,t,I
+        W=st_matrix(wn); e=st_data(.,ev); num=0; den=0
+        for(t=1;t<=T;t++){ et=e[((t-1)*N:+(1::N))]; et=et:-mean(et); Wet=W*et
+            num=num+(et'Wet); den=den+(et'et) }
+        st_numscalar("mI",num/den)
+    }
+    // 单期 Moran's I + 正态近似 z（随机化方差）
+    void moranYr(string scalar vv, string scalar wn){
+        real matrix W; real colvector x,Wx; real scalar n,S0,S1,S2,EI,VI,I,z
+        W=st_matrix(wn); x=st_data(.,vv); n=rows(x); x=x:-mean(x)
+        Wx=W*x; I=(x'Wx)/(x'x)
+        S0=sum(W); S1=0.5*sum((W+W'):^2); S2=sum((rowsum(W)+colsum(W)'):^2)
+        EI=-1/(n-1); VI=(n^2*S1-n*S2+3*S0^2)/(S0^2*(n^2-1))-EI^2
+        z=(I-EI)/sqrt(VI); st_numscalar("mI",I); st_numscalar("mZ",z)
     }
 end
-
-* 对 raw 与 两向固定效应残差，逐矩阵计算 Moran's I（需按 year city_code 排序）
 sort year city_code
 qui reghdfe lnpoco2 DID $CTRL, a(city_code year) resid
-predict double _resTW, resid
-di as txt _n "== 全局 Moran's I（主诊断；p 为置换检验经验 p 值）=="
-di as txt %-8s "矩阵" %14s "raw lnpoco2" %20s "Two-way FE 残差"
+predict double _res, resid
+di as txt _n "== 全局 Moran's I（双向FE残差）=="
 foreach W in Wadj Wgeo Wecon Wegw Wegn {
-    mata: moranPanel("lnpoco2", "`W'", 289, 21)
-    local Ir = mI; local Pr = mP
-    mata: moranPanel("_resTW", "`W'", 289, 21)
-    local It = mI; local Pt = mP
-    di as txt %-8s "`W'" as res %10.3f `Ir' " (p=" %4.2f `Pr' ")" %12.3f `It' " (p=" %4.2f `Pt' ")"
+    mata: moranP("_res","`W'",289,21)
+    di as txt "  `W': Moran's I(残差) = " as res %6.3f mI
 }
-drop _resTW
-* 结论：raw 层面显著为正(空间集聚)；纳入控制与双向固定效应后残差空间相关基本消失。
+drop _res
+* 分年度 Moran's I 表（主推矩阵 Wegw）→ results/
+cap postclose MP
+postfile MP int year double MoranI double Zscore using "results/moran_by_year.dta", replace
+forvalues y=2003/2023 {
+    preserve
+        keep if year==`y'
+        sort city_code
+        mata: moranYr("lnpoco2","Wegw")
+        post MP (`y') (mI) (mZ)
+    restore
+}
+postclose MP
+preserve
+    use "results/moran_by_year.dta", clear
+    gen Pvalue = 2*(1-normal(abs(Zscore)))
+    list, sep(0) noobs
+    export excel using "results/moran_by_year.xlsx", replace first(var)
+    twoway (connected MoranI year, msymbol(O) lcolor(black) mcolor(black)), ///
+        scheme(s1mono) ytitle("全局 Moran's I") xtitle("年份") ///
+        title("减污降碳全局空间自相关的时间演变")
+    graph export "results/fig_moran_trend.png", replace width(2000) height(1300)
+restore
 
 *------------------------------------------------------------------------------*
-* 2. 空间杜宾模型 SDM：三列 (1)Time FE (2)Individual FE (3)Two-way FE
-*    主推矩阵：经济地理权重 Wegw（其余矩阵循环见下方注释）
-*    xsmle: model(sdm) 含 Wy 与 WX；effects 报告 直接/间接/总 效应
+* 2. 空间杜宾模型 SDM：三列 (1)Time FE (2)Individual FE (3)Two-way FE（完整系数）
+*    + Hausman 检验（FE vs RE）
 *------------------------------------------------------------------------------*
 eststo clear
-* (1) Time FE（仅年份）
 eststo sdm_time: xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(time) ///
-        effects nsim(999) vce(cluster city_code)
-estadd scalar rho = e(rho)
-* (2) Individual FE（仅城市）
+    effects nsim(999) vce(cluster city_code)
+estadd scalar rho=e(rho)
 eststo sdm_ind:  xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(ind) ///
-        effects nsim(999) vce(cluster city_code)
-estadd scalar rho = e(rho)
-* (3) Two-way FE（城市+年份）
+    effects nsim(999) vce(cluster city_code)
+estadd scalar rho=e(rho)
 eststo sdm_both: xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(both) ///
-        effects nsim(999) vce(cluster city_code)
-estadd scalar rho = e(rho)
-
-esttab sdm_time sdm_ind sdm_both using "results_SDM_3FE.rtf", replace ///
+    effects nsim(999) vce(cluster city_code)
+estadd scalar rho=e(rho)
+esttab sdm_time sdm_ind sdm_both using "results/table_SDM_3FE.rtf", replace ///
     b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
     mtitles("(1) Time FE" "(2) Individual FE" "(3) Two-way FE") ///
     scalars("rho 空间自回归系数rho") stats(N, labels("观测值N")) ///
-    nogaps compress title("空间杜宾模型(SDM)：经济地理权重矩阵") ///
-    addnotes("括号内为t值；* p<0.1 ** p<0.05 *** p<0.01" ///
-             "Wy 为 lnpoco2 空间滞后；W×DID 为政策空间溢出项")
+    nogaps compress title("空间杜宾模型完整估计(W_egw)")
 
-* —— 其余 4 个矩阵：把 wmat(Wegw) 换成 Wadj/Wgeo/Wecon/Wegn 重复即可 ——
-foreach W in Wadj Wgeo Wecon Wegn {
-    di as txt _n "==== SDM(`W')，三种固定效应 ===="
-    foreach fe in time ind both {
-        qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(`W') fe type(`fe') nsim(1)
-        di as txt "  `W' / `fe' FE:  rho=" as res %6.3f e(rho)
-    }
+* Hausman 检验（SDM 个体FE vs RE）
+qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) fe type(ind)
+est store fe_sdm
+qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wegw) re
+est store re_sdm
+hausman fe_sdm re_sdm, sigmamore
+* 若 xsmle 的 re 选项不可用，可用非空间面板 Hausman 作为替代：
+*   qui xtreg lnpoco2 DID $CTRL, fe ; est store fe0
+*   qui xtreg lnpoco2 DID $CTRL, re ; est store re0 ; hausman fe0 re0
+
+*------------------------------------------------------------------------------*
+* 3. 替换五类权重矩阵（完整系数，Time FE）
+*------------------------------------------------------------------------------*
+eststo clear
+foreach W in Wadj Wgeo Wecon Wegw Wegn {
+    eststo m_`W': xsmle lnpoco2 DID $CTRL, model(sdm) wmat(`W') fe type(time) ///
+        effects nsim(999) vce(cluster city_code)
+    estadd scalar rho=e(rho)
 }
+esttab m_Wadj m_Wgeo m_Wecon m_Wegw m_Wegn using "results/table_SDM_5matrices.rtf", replace ///
+    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    mtitles("邻接" "地理" "经济" "经济地理权重" "经济地理嵌套") ///
+    scalars("rho rho") stats(N, labels("N")) nogaps compress ///
+    title("五类权重矩阵 SDM 完整估计(Time FE)")
 
 *------------------------------------------------------------------------------*
-* 3. 溢出范围：不同 km 距离权重下的 SDM（距离衰减）——模型即 SDM/SAR
-*    做法：在 Mata 逐个构造 ≤km 的距离邻接矩阵，重估 SDM，观察 rho 与 W×DID 随距离变化。
+* 4. 溢出范围：不同 km 距离阈值下的 SDM（Time FE）→ 表 + 图
 *------------------------------------------------------------------------------*
-tempname PM
-postfile `PM' int km double rho double wdid double p_wdid using "results_range.dta", replace
+cap postclose PM
+postfile PM int km double rho using "results/spillover_range.dta", replace
 foreach km in 150 200 250 300 350 400 450 500 {
     mata:
-        Dm = st_matrix("Dmat"); n=rows(Dm)
-        Bk = (Dm:<=`km') :* (Dm:>0)
-        for (i=1;i<=n;i++) if (rowsum(Bk[i,.])==0) {
-            di=Dm[i,.]; di[i]=.; mi=.; mv=.
-            for (j=1;j<=n;j++) if (j!=i & (mv==.|di[j]<mv)) { mv=di[j]; mi=j }
-            Bk[i,mi]=1
-        }
-        rs=rowsum(Bk); rs=rs+(rs:==0)
-        st_matrix("Wk", Bk:/rs)
+        Dm=st_matrix("Dmat"); n=rows(Dm); Bk=(Dm:<=`km'):*(Dm:>0)
+        for(i=1;i<=n;i++) if(rowsum(Bk[i,.])==0){ di=Dm[i,.]; di[i]=.; mv=.; mi=.
+            for(j=1;j<=n;j++) if(j!=i & (mv==.|di[j]<mv)){mv=di[j]; mi=j}; Bk[i,mi]=1 }
+        rs=rowsum(Bk); rs=rs+(rs:==0); st_matrix("Wk",Bk:/rs)
     end
-    qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wk) fe type(time) effects nsim(1)
-    * 取 W×DID（Durbin 项）系数：e(b) 中名为 "Wx:DID" 或 "DID" 视版本；请按输出核对
-    local rho=e(rho)
-    di as txt "距离 ≤`km'km:  rho=" as res %6.3f `rho'
-    post `PM' (`km') (`rho') (.) (.)
+    qui xsmle lnpoco2 DID $CTRL, model(sdm) wmat(Wk) fe type(time) nsim(1)
+    post PM (`km') (e(rho))
 }
-postclose `PM'
-use "results_range.dta", clear
-twoway (connected rho km, msymbol(O) lcolor(black) mcolor(black)), ///
-    yline(0,lpattern(dash) lcolor(gs8)) scheme(s1mono) ///
-    xtitle("距离阈值 (km)") ytitle("空间自回归系数 rho") ///
-    title("减污降碳空间溢出的地理衰减(Time FE)")
-graph export "fig_distance_decay.png", replace width(2000) height(1400)
-use "data_spatial.dta", clear
-cap gen double lnfin=ln(fin)
-xtset city_code year
+postclose PM
+preserve
+    use "results/spillover_range.dta", clear
+    twoway (connected rho km, msymbol(O) lcolor(black) mcolor(black)), ///
+        yline(0,lpattern(dash) lcolor(gs9)) scheme(s1mono) ///
+        xtitle("地理距离阈值 (km)") ytitle("空间自回归系数 rho") ///
+        title("减污降碳空间溢出的地理衰减")
+    graph export "results/fig_distance_decay.png", replace width(2000) height(1300)
+restore
 
 *------------------------------------------------------------------------------*
-* 4. 门槛/分段异质性溢出
-*   (A) Hansen(1999) 面板门槛模型：门槛变量可取 经济发展/产业结构
-*   (B) 分区制 SDM：政策空间溢出 W×DID 按多个维度分区制估计（Time FE）
-*       维度：吸收能力(human)、经济发展(lnpgdp)、旅游相关(ter_gdp)、环境规制(er)、区位(region)
-*   (C) 控制组溢出污染检验（仿标杆文献表A6）
+* 5. 门槛/分段异质性溢出：(A) Hansen门槛 (B) 分区制SDM (C) 控制组溢出污染
 *------------------------------------------------------------------------------*
-* (A) Hansen 面板门槛（门槛变量=经济发展；可改 qx(struc2) 或 qx(ter_gdp)）
+* (A) Hansen 面板门槛（门槛变量=经济发展；可改 struc2 / ter_gdp）
 xthreg lnpoco2 DID $CTRL, rx(DID) qx(lnpgdp) thnum(2) trim(0.01 0.01) grid(300) bs(300 300)
-estimates store thr_dev
-
-* (B) 分区制 SDM：对每个维度按城市均值中位数分高/低，生成 DID_lo/DID_hi 交互并分区制估计
+est store thr_dev
+* (B) 分区制 SDM（对每个维度分高/低，Time FE）
+eststo clear
 foreach v of newlist human lnpgdp ter_gdp er {
     capture confirm variable `v'
     if _rc continue
-    bysort city_code: egen m_`v' = mean(`v')
+    cap drop hi_`v' DIDlo_`v' DIDhi_`v' m_`v'
+    bysort city_code: egen m_`v'=mean(`v')
     qui sum m_`v', detail
-    gen byte hi_`v' = m_`v' > r(p50)
-    gen double DIDlo_`v' = DID*(1-hi_`v')
-    gen double DIDhi_`v' = DID*hi_`v'
-    di as txt _n "==== 分区制溢出（门槛=`v'，Time FE；DIDlo=低组, DIDhi=高组）===="
-    xsmle lnpoco2 DIDlo_`v' DIDhi_`v' $CTRL, model(sdm) wmat(Wegw) ///
+    gen byte hi_`v'=m_`v'>r(p50)
+    gen double DIDlo_`v'=DID*(1-hi_`v')
+    gen double DIDhi_`v'=DID*hi_`v'
+    eststo reg_`v': xsmle lnpoco2 DIDlo_`v' DIDhi_`v' $CTRL, model(sdm) wmat(Wegw) ///
         fe type(time) effects nsim(999) vce(cluster city_code)
-    estimates store reg_`v'
 }
-* 区位（东部 vs 中西部）
-gen byte east = region=="东部"
-gen double DIDlo_east = DID*(1-east)
-gen double DIDhi_east = DID*east
-di as txt _n "==== 分区制溢出（区位：中西部=DIDlo, 东部=DIDhi，Time FE）===="
-xsmle lnpoco2 DIDlo_east DIDhi_east $CTRL, model(sdm) wmat(Wegw) ///
+cap drop east DIDlo_east DIDhi_east
+gen byte east=region=="东部"
+gen double DIDlo_east=DID*(1-east)
+gen double DIDhi_east=DID*east
+eststo reg_east: xsmle lnpoco2 DIDlo_east DIDhi_east $CTRL, model(sdm) wmat(Wegw) ///
     fe type(time) effects nsim(999) vce(cluster city_code)
-estimates store reg_east
-
-* (C) 控制组溢出污染检验（仿标杆文献表A6）：queen 邻接下，
-*     spill = 自身未处理(DID==0) 且 同年至少有一个已处理邻居
-sort year city_code                              // 关键：按 (year, city_code) 排序，与 W 行序一致
+esttab reg_* using "results/table_regime_spillover.rtf", replace ///
+    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) nogaps compress ///
+    title("分区制异质性溢出(Time FE, W_egw)")
+* (C) 控制组溢出污染检验（queen 邻接）
+sort year city_code
 mata:
-    Wb  = (st_matrix("Wadj"):>0)                 // 二值邻接
-    did = st_data(., "DID")
-    N   = rows(Wb); T = rows(did)/N
-    sp  = J(rows(did),1,0)
-    for (t=1; t<=T; t++) {
-        idx = (t-1)*N :+ (1::N)
-        dt  = did[idx]
-        nb  = (Wb*dt) :> 0                        // 邻居有已处理
-        sp[idx] = (dt:==0) :* nb                  // 未处理且有已处理邻居
-    }
-    st_store(., st_addvar("byte","spill"), sp)
+    Wb=(st_matrix("Wadj"):>0); did=st_data(.,"DID"); N=rows(Wb); T=rows(did)/N; sp=J(rows(did),1,0)
+    for(t=1;t<=T;t++){ idx=(t-1)*N:+(1::N); dt=did[idx]; nb=(Wb*dt):>0; sp[idx]=(dt:==0):*nb }
+    st_store(.,st_addvar("byte","spill"),sp)
 end
-reghdfe lnpoco2 DID $CTRL,        a(city_code year) vce(cluster city_code)
-estimates store base_did
-reghdfe lnpoco2 DID spill $CTRL,  a(city_code year) vce(cluster city_code)
-estimates store spill_did
-* 结果：spill 不显著、DID 仍显著为负 → 空间溢出未实质污染基准识别。
-use "data_spatial.dta", clear
-cap gen double lnfin=ln(fin)
-xtset city_code year
+eststo clear
+eststo base_did:  reghdfe lnpoco2 DID $CTRL,       a(city_code year) vce(cluster city_code)
+eststo spill_did: reghdfe lnpoco2 DID spill $CTRL, a(city_code year) vce(cluster city_code)
+esttab base_did spill_did using "results/table_spillover_contamination.rtf", replace ///
+    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID spill) ///
+    mtitles("基准" "加溢出虚拟变量") nogaps compress title("控制组溢出污染检验")
 
 *------------------------------------------------------------------------------*
-* 5. Moran 散点图：2003 与 2023 年（主推矩阵 Wegw）
+* 6. Moran 散点图：2003 与 2023 年（主推矩阵 Wegw）→ results/
 *------------------------------------------------------------------------------*
 foreach yr in 2003 2023 {
     preserve
         keep if year==`yr'
         sort city_code
-        * 标准化 z 与空间滞后 Wz
         qui sum lnpoco2
-        gen double z = (lnpoco2 - r(mean))/r(sd)
+        gen double z=(lnpoco2-r(mean))/r(sd)
         mkmat z, matrix(zz)
-        mata:
-            W = st_matrix("Wegw"); zv = st_matrix("zz")
-            st_matrix("Wz", W*zv)
-            I = (zv' * (W*zv)) / (zv'zv)
-            st_numscalar("MoranI", I)
-        end
+        mata: st_matrix("Wz",st_matrix("Wegw")*st_matrix("zz")); ///
+              st_numscalar("MI",(st_matrix("zz")'*(st_matrix("Wegw")*st_matrix("zz")))/(st_matrix("zz")'st_matrix("zz")))
         svmat Wz, names(wz)
-        local mi = MoranI
-        twoway (scatter wz1 z, mcolor(black) msize(small) msymbol(Oh)) ///
-               (lfit wz1 z, lcolor(black)), ///
-               yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) ///
-               scheme(s1mono) legend(off) ///
-               xtitle("z (标准化 lnpoco2)") ytitle("W·z (空间滞后)") ///
-               title("Moran 散点图 `yr'  (Moran's I = " + string(`mi',"%5.3f") + ")")
-        graph export "fig_moran_`yr'.png", replace width(1600) height(1400)
-        di as result "Moran's I `yr' = " %6.3f `mi'
+        local mi=MI
+        twoway (scatter wz1 z, mcolor(black) msize(small) msymbol(Oh)) (lfit wz1 z, lcolor(black)), ///
+            yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) ///
+            scheme(s1mono) legend(off) xtitle("标准化 lnpoco2") ytitle("空间滞后 W·z") ///
+            title("Moran 散点图 `yr'  (Moran's I=" + string(`mi',"%5.3f") + ")")
+        graph export "results/fig_moran_`yr'.png", replace width(1600) height(1400)
     restore
 }
-
-di as result _n "================ 空间溢出全部分析完成：results_*.rtf / fig_*.png ================"
+di as result _n "================ 完成：全部结果见 results 文件夹 ================"
