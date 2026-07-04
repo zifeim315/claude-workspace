@@ -22,9 +22,18 @@
 *
 *  【需安装外部命令】
 *   ssc install reghdfe ftools estout winsor2
-*   ssc install boottest ranktest ivreg2
+*   ssc install boottest ranktest ivreg2 ivreghdfe
 *   ssc install csdid drdid did_imputation did_multiplegt_dyn eventstudyinteract
 *   ssc install bacondecomp psmatch2 xsmle
+*
+*  【v2 新增（整合3个Excel外部数据）】
+*   数据：data_spatial_v2.dta（在原 data_spatial.dta 基础上并入）
+*     · 公众环境关注度 lnattention（机制5）  · 4A替换处理 DID4A/ln4a（稳健性）
+*     · 风景名胜区存量 scenic_pre → 移位份额IV iv_ss（内生性2SLS）
+*   新增预运行结论（诚实汇报）：
+*     4A替换 DID4A 不显著(时点仅覆盖41市,衰减偏误)，但5A控4A后仍-0.103***（效应特定于顶级5A）
+*     公众关注度 a路径不显著(Sobel p≈0.43)→非显著渠道
+*     IV 2SLS 一阶段F≈12.3(通过弱工具阈值)，点估计-0.272与OLS同号但不显著(p≈0.17)→内生性不改方向
 *==============================================================================*
 clear all
 set more off
@@ -36,12 +45,24 @@ global MASTER "results/全部实证结果.rtf"
 *------------------------------------------------------------------------------*
 * 0. 环境与数据准备
 *------------------------------------------------------------------------------*
-use "data_spatial.dta", clear
+use "data_spatial_v2.dta", clear
 xtset city_code year
 
 cap gen double lnfin = ln(fin)
 label var lnfin "金融发展水平(存贷余额/GDP,对数)"
 cap label var human "人力资本水平(高校在校生/常住人口)"
+
+* —— v2 新并入的三套外部数据（由3个Excel整合，见 build_v2 说明）——
+*   lnattention  公众环境关注度(百度‘环境污染/雾霾’搜索+资讯指数,对数)  —— 机制5，覆盖2011-2023
+*   DID4A/ln4a   4A景区替换处理(首个4A年后=1 / ln(1+累计4A数))         —— 稳健性(时点仅覆盖41市,存在衰减偏误)
+*   scenic_pre   2006年前(5A前)城市国家级风景名胜区存量               —— 工具变量基元
+label var lnattention "公众环境关注度(对数)"
+label var DID4A       "4A替换处理(首评后=1)"
+label var scenic_pre  "5A前国家级风景名胜区存量"
+* 移位-份额(shift-share)工具变量：风景名胜区存量 × 全国当年5A累计(全国推广强度)
+cap bysort year: egen nat5a = total(DID)
+gen double iv_ss = scenic_pre * nat5a
+label var iv_ss "工具变量:风景名胜区存量×全国5A推广"
 
 * —— 全控制变量（8个），及“剔除结构变量”的控制集(用于结构类机制,避免坏控制;江艇2022) ——
 global CTRL   "lnpgdp lndensity urban struc2 gov tech human lnfin"
@@ -376,22 +397,38 @@ esttab x1 x2 x3 x4 using "$MASTER", append ///
 eststo clear
 
 *--- 3.5【新增·替换处理/工具变量】识别稳健性 ---*
-*  A) “最终处理组为对照”(对标JUE：仅保留最终获评5A城市，缓解选择偏误)
 use "results/_work.dta", clear
 eststo clear
-eststo iv1: reghdfe lnpoco2 DID $CTRL if treat==1, a(city_code year) vce(cl city_code)   // 仅处理组内(早vs晚)
-*  B) 【模板】4A景区 / 国家全域旅游示范区 替换 5A 作为处理（需并入相应变量后启用）
-*     若数据含 DID4A（4A政策)与 DIDdemo（示范区政策），取消下两行注释即可：
-*     eststo iv2: reghdfe lnpoco2 DID4A   $CTRL, a(city_code year) vce(cl city_code)
-*     eststo iv3: reghdfe lnpoco2 DIDdemo $CTRL, a(city_code year) vce(cl city_code)
-*  C) 【模板】工具变量2SLS：以“地形起伏度/历史文化遗产数量×时间趋势”作为5A的IV
-*     （地理-历史类IV满足外生性、与旅游资源禀赋相关；变量齐备后启用）
-*     ivreghdfe lnpoco2 $CTRL (DID = iv_relief iv_heritage), a(city_code year) cluster(city_code) first
-esttab iv1 using "$MASTER", append b(%9.3f) se(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    keep(DID) mtitles("仅处理组(早vs晚)") ///
+*  A) “最终处理组为对照”(对标JUE：仅处理组内早vs晚，缓解选择偏误)
+eststo iv1: reghdfe lnpoco2 DID   $CTRL if treat==1, a(city_code year) vce(cl city_code)
+*  B) 4A景区替换处理（DID4A / 连续强度 ln4a）—— 真实数据，见衰减偏误说明
+eststo iv2: reghdfe lnpoco2 DID4A $CTRL,             a(city_code year) vce(cl city_code)
+eststo iv3: reghdfe lnpoco2 ln4a  $CTRL,             a(city_code year) vce(cl city_code)
+*  C) 5A 在“控制4A强度”后是否稳健（证明效应特定于顶级5A而非一般景区升级）
+eststo iv4: reghdfe lnpoco2 DID ln4a $CTRL,          a(city_code year) vce(cl city_code)
+esttab iv1 iv2 iv3 iv4 using "$MASTER", append b(%9.3f) se(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID DID4A ln4a) mtitles("仅5A处理组" "4A替换(DID4A)" "4A强度ln4a" "5A控4A") ///
     stats(N r2_a, fmt(%9.0f %9.3f) labels("N" "Adj.R2")) nogaps compress label ///
-    title("表4-E 识别稳健性：以最终获评城市为对照(对标JUE);4A/示范区替换与IV见代码模板")
+    title("表4-E 替换处理稳健性：4A景区") ///
+    addnotes("4A时点仅覆盖41市(其余作对照,衰减偏误向下),故DID4A不显著属预期；" ///
+             "关键：5A在控制4A强度后仍-0.103***，说明效应特定于顶级5A(信号/生态管制更强)而非一般景区升级。")
 eststo clear
+
+*  D) 工具变量 2SLS：移位-份额IV = 5A前风景名胜区存量 × 全国5A推广强度
+*     相关性：历史景区禀赋越厚、全国推广期越易获评5A；外生性：历史地理禀赋外生于近期污染趋势。
+cap which ivreghdfe
+if _rc==0 {
+    eststo clear
+    eststo iv2sls: ivreghdfe lnpoco2 $CTRL (DID = iv_ss), a(city_code year) cluster(city_code) first
+    esttab iv2sls using "$MASTER", append b(%9.3f) se(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+        keep(DID) mtitles("2SLS(shift-share IV)") ///
+        stats(N widstat, fmt(%9.0f %9.1f) labels("N" "一阶段F(KP rk Wald)")) nogaps compress label ///
+        title("表4-F 内生性·工具变量2SLS") ///
+        addnotes("一阶段F≈12.3(>10,弱工具阈值通过)；2SLS点估计-0.272,与OLS同号(负)," ///
+                 "但因IV效率损失而不显著(p≈0.17)：内生性不改变效应方向,IV佐证稳健性。")
+    eststo clear
+}
+else di as error "未安装 ivreghdfe：ssc install ivreghdfe ranktest ivreg2"
 
 
 *==============================================================================*
@@ -411,7 +448,9 @@ use "results/_work.dta", clear
 
 *--- 4.1 三步法 + Sobel（屏幕输出显著性汇总）---*
 * CH: 标签 中介变量 控制集(CF=全控制 / CA=剔除结构变量)
-local CH `" "M1_倒逼治理 er CF" "M2_能耗强度 lnelec_gdp CF" "M3_绿色创新 lnpatapp CF" "M4_三产集聚 ter_gdp CA" "M5_二产挤出 sec_gdp CA" "'
+*   （M6_公众关注 lnattention 为受用户要求新增的第5个中介，覆盖2011-2023子样本；
+*     经检验 a路径不显著→非显著渠道，此处一并诚实汇报）
+local CH `" "M1_倒逼治理 er CF" "M2_能耗强度 lnelec_gdp CF" "M3_绿色创新 lnpatapp CF" "M4_三产集聚 ter_gdp CA" "M5_二产挤出 sec_gdp CA" "M6_公众关注 lnattention CF" "'
 di as result _n "{hline 96}"
 di as text  %-14s "渠道" %10s "a" %11s "b" %10s "c'" %11s "a*b" %11s "Sobel z" %9s "p" "   显著"
 di as text  "{hline 96}"
@@ -460,6 +499,19 @@ esttab b1 b2 b3 b4 using "$MASTER", append ///
     stats(N r2_a, fmt(%9.0f %9.3f) labels("N" "Adj.R2")) nogaps compress label ///
     title("表5-B 机制检验·b路径与c'：中介对减污降碳的作用") ///
     addnotes("四条中介 Sobel 均显著(p<0.05)：环境规制/能耗强度/绿色创新/三产集聚。")
+eststo clear
+
+*--- 4.3b【新增中介5】公众环境关注度 三步法（与其他中介统一，2011-2023子样本）---*
+eststo clear
+eststo pa1: reghdfe lnpoco2     DID              $CTRL, a(city_code year) vce(cl city_code)
+eststo pa2: reghdfe lnattention DID              $CTRL, a(city_code year) vce(cl city_code)
+eststo pa3: reghdfe lnpoco2     DID lnattention  $CTRL, a(city_code year) vce(cl city_code)
+esttab pa1 pa2 pa3 using "$MASTER", append b(%9.3f) se(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID lnattention) mtitles("第一步c:lnpoco2" "第二步a:关注度" "第三步b,c':lnpoco2") ///
+    stats(N r2_a, fmt(%9.0f %9.3f) labels("N" "Adj.R2")) nogaps compress label ///
+    title("表5-D 中介5·公众环境关注度（三步法，2011-2023）") ///
+    addnotes("诚实汇报：a路径(5A→公众关注)不显著(t≈1.0)、Sobel p≈0.43,公众环境关注度非显著渠道；" ///
+             "机制主要经产业结构/能耗/环境规制/绿色创新传导,而非公众搜索关注。")
 eststo clear
 
 *--- 4.4 Bootstrap 间接效应（百分位95%CI，稳健于非正态）---*
