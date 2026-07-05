@@ -109,12 +109,11 @@ esttab b1 b2 b3 b4 b5 using "results/表2_基准回归(多设定).rtf", replace 
 eststo clear
 
 *--- 2.2 Goodman-Bacon(2021) 分解：量化 TWFE 偏误来源 ---*
-cap noisily {
-    preserve
-    bacondecomp lnpoco2 DID, ddetail
-    graph export "results/图_BaconDecomp.png", replace width(2000) height(1400)
-    restore
-}
+* 注：preserve/restore 放在 cap 之外，确保 bacondecomp 未安装报错时数据仍被 restore(避免 r621 悬挂preserve)
+preserve
+cap noisily bacondecomp lnpoco2 DID, ddetail
+cap noisily graph export "results/图_BaconDecomp.png", replace width(2000) height(1400)
+restore
 
 *--- 2.3 异质性稳健 ATT：Callaway & Sant'Anna(2021) 作为主基准的稳健替代 ---*
 use "results/_work.dta", clear
@@ -194,9 +193,9 @@ forvalues k = 0/`L' {
     post ES5 ("TWFE") (`k') (_b[evp`k']) (_b[evp`k']-1.96*_se[evp`k']) (_b[evp`k']+1.96*_se[evp`k'])
 }
 restore
-* (2) Sun-Abraham
-cap noisily {
+* (2) Sun-Abraham   （preserve/restore 置于 cap 之外，防止包缺失时悬挂 preserve → r621）
 preserve
+cap noisily {
 gen rel_sa = rel
 replace rel_sa = -`L' if rel < -`L' & !missing(rel)
 replace rel_sa =  `L' if rel >  `L' & !missing(rel)
@@ -221,11 +220,11 @@ foreach v of local cols {
     local ++j
 }
 post ES5 ("SA") (-1) (0) (0) (0)
-restore
 }
+restore
 * (3) Callaway-Sant'Anna
-cap noisily {
 preserve
+cap noisily {
 csdid lnpoco2 `CTRL2', ivar(city_code) time(year) gvar(gvar) method(dripw) agg(event)
 estat event, window(-`L' `L')
 matrix r = r(table)
@@ -241,11 +240,11 @@ foreach c of local nm {
     }
     local ++j
 }
-restore
 }
+restore
 * (4) Borusyak et al.
-cap noisily {
 preserve
+cap noisily {
 did_imputation lnpoco2 city_code year gvar, controls(`CTRL2') horizons(0/`L') pretrends(`L') autosample minn(0) nose
 matrix b = e(b)
 matrix V = e(V)
@@ -254,15 +253,21 @@ local j = 1
 foreach v of local cols {
     local bb = b[1,`j']
     local se = sqrt(V[`j',`j'])
-    if strpos("`v'","tau") { local tt = real(subinstr("`v'","tau","",.)) ; post ES5 ("BJS") (`tt') (`bb') (`bb'-1.96*`se') (`bb'+1.96*`se') }
-    else if strpos("`v'","pre") { local tt = -real(subinstr("`v'","pre","",.)) ; post ES5 ("BJS") (`tt') (`bb') (`bb'-1.96*`se') (`bb'+1.96*`se') }
+    if strpos("`v'","tau") {
+        local tt = real(subinstr("`v'","tau","",.))
+        post ES5 ("BJS") (`tt') (`bb') (`bb'-1.96*`se') (`bb'+1.96*`se')
+    }
+    if strpos("`v'","pre") {
+        local tt = -real(subinstr("`v'","pre","",.))
+        post ES5 ("BJS") (`tt') (`bb') (`bb'-1.96*`se') (`bb'+1.96*`se')
+    }
     local ++j
 }
-restore
 }
+restore
 * (5) de Chaisemartin-D'Haultfoeuille
-cap noisily {
 preserve
+cap noisily {
 did_multiplegt_dyn lnpoco2 city_code year DID, effects(`L') placebo(`L') controls(`CTRL2') cluster(city_code) graph_off
 forvalues k = 1/`L' {
     local bb = e(Effect_`k') ; local se = e(se_effect_`k')
@@ -272,8 +277,8 @@ forvalues k = 1/`L' {
     local bb = e(Placebo_`k') ; local se = e(se_placebo_`k')
     if !missing(`bb') post ES5 ("DCDH") (-`k') (`bb') (`bb'-1.96*`se') (`bb'+1.96*`se')
 }
-restore
 }
+restore
 postclose ES5
 use "`results'", clear
 gen double x = rel
