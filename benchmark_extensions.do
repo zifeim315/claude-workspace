@@ -64,7 +64,7 @@ forvalues p = 1/4 {
     gen double dgdp`p' = (gdp`t1'-gdp`t0')/gdp`t0'
     gen double DI`p'   = dsem`p'/dgdp`p'
     * Tapio 八状态分类（以 0/0.8/1.2 为临界；SEM为负向指标）
-    gen str3 state`p' = ""
+    gen str24 state`p' = ""
     replace state`p' = "强脱钩SD"   if dgdp`p'>0 & dsem`p'<0 & DI`p'<0            // 最优:增长且减排
     replace state`p' = "弱脱钩WD"   if dgdp`p'>0 & dsem`p'>0 & DI`p'>=0  & DI`p'<0.8
     replace state`p' = "扩张连接EC" if dgdp`p'>0 & dsem`p'>0 & DI`p'>=0.8 & DI`p'<=1.2
@@ -80,8 +80,11 @@ restore
 *     思路：以政策前后各城市实现强脱钩(SEM下降且GDP上升)的年际状态为结果
 preserve
 xtset city_code year
-gen double g_gdp = D.ln(gdp)
-gen double g_sem = D.ln(poll_idx*co2_wt)
+* 注意：D. 算子不能套函数(D.ln() 会报错)。须先生成对数变量，再对其差分。
+gen double lgdp = ln(gdp)
+gen double lsem = ln(poll_idx*co2_wt)
+gen double g_gdp = D.lgdp
+gen double g_sem = D.lsem
 gen byte strong_decouple = (g_gdp>0 & g_sem<0) if !missing(g_gdp,g_sem)   // 年度强脱钩=1
 eststo clear
 eststo dec: reghdfe strong_decouple DID $CTRL, a(city_code year) vce(cl city_code)
