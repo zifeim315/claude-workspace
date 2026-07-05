@@ -131,8 +131,12 @@ use "results/_work.dta", clear
 gen rel = year - action
 replace rel = -4 if rel < -4
 replace rel =  4 if rel > 4 & rel != .
-forvalues k = 2/4 { gen lead`k' = (rel == -`k') }
-forvalues k = 0/4 { gen lag`k'  = (rel ==  `k') }
+forvalues k = 2/4 {
+    gen lead`k' = (rel == -`k')
+}
+forvalues k = 0/4 {
+    gen lag`k'  = (rel ==  `k')
+}
 reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 $CTRL, a(city_code year) vce(r)
 cap postclose es
 postfile es double(rel coef lo hi) using "results/_es_tmp.dta", replace
@@ -174,13 +178,21 @@ preserve
 gen rel_b = rel
 replace rel_b = -`L' if rel < -`L' & !missing(rel)
 replace rel_b =  `L' if rel >  `L' & !missing(rel)
-forvalues k = `L'(-1)2 { gen evm`k' = (rel_b==-`k') & !nevertreat }
+forvalues k = `L'(-1)2 {
+    gen evm`k' = (rel_b==-`k') & !nevertreat
+}
 gen evm1 = 0
-forvalues k = 0/`L' { gen evp`k' = (rel_b==`k') & !nevertreat }
+forvalues k = 0/`L' {
+    gen evp`k' = (rel_b==`k') & !nevertreat
+}
 reghdfe lnpoco2 evm5 evm4 evm3 evm2 evp0 evp1 evp2 evp3 evp4 evp5 `CTRL2', a(city_code year) vce(cl city_code)
-foreach k in 5 4 3 2 { post ES5 ("TWFE") (-`k') (_b[evm`k']) (_b[evm`k']-1.96*_se[evm`k']) (_b[evm`k']+1.96*_se[evm`k']) }
+foreach k in 5 4 3 2 {
+    post ES5 ("TWFE") (-`k') (_b[evm`k']) (_b[evm`k']-1.96*_se[evm`k']) (_b[evm`k']+1.96*_se[evm`k'])
+}
 post ES5 ("TWFE") (-1) (0) (0) (0)
-forvalues k = 0/`L' { post ES5 ("TWFE") (`k') (_b[evp`k']) (_b[evp`k']-1.96*_se[evp`k']) (_b[evp`k']+1.96*_se[evp`k']) }
+forvalues k = 0/`L' {
+    post ES5 ("TWFE") (`k') (_b[evp`k']) (_b[evp`k']-1.96*_se[evp`k']) (_b[evp`k']+1.96*_se[evp`k'])
+}
 restore
 * (2) Sun-Abraham
 cap noisily {
@@ -188,8 +200,12 @@ preserve
 gen rel_sa = rel
 replace rel_sa = -`L' if rel < -`L' & !missing(rel)
 replace rel_sa =  `L' if rel >  `L' & !missing(rel)
-forvalues k = `L'(-1)2 { gen sam`k' = (rel_sa==-`k') & !nevertreat }
-forvalues k = 0/`L' { gen sap`k' = (rel_sa==`k') & !nevertreat }
+forvalues k = `L'(-1)2 {
+    gen sam`k' = (rel_sa==-`k') & !nevertreat
+}
+forvalues k = 0/`L' {
+    gen sap`k' = (rel_sa==`k') & !nevertreat
+}
 eventstudyinteract lnpoco2 sam5 sam4 sam3 sam2 sap0 sap1 sap2 sap3 sap4 sap5, ///
     cohort(gvar) control_cohort(nevertreat) covariates(`CTRL2') absorb(i.city_code i.year) vce(cluster city_code)
 matrix b = e(b_iw)
