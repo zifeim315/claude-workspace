@@ -22,20 +22,24 @@ cap global CTRL "lnpgdp lndensity urban struc2 gov tech human lnfin"
 *   标杆式(1)：SEM = CEI × EPI，其中 CEI = CO2/GDP（碳强度，非总量）
 *==============================================================================*
 * A.1 碳强度口径 SEM（对齐标杆 CEI 定义）
-gen double cei      = co2_wt/gdp                 // 碳排放强度 = CO2(万吨)/GDP
-gen double sem_int  = cei * poll_idx             // 协同排放(强度口径) = CEI × EPI
-gen double lnsem_int = ln(sem_int)
-label var cei       "碳排放强度 CEI=CO2/GDP"
-label var lnsem_int "协同排放SEM(碳强度口径,ln)"
+* ⚠️ 重要：数据中的 poll_idx 无法重构主DV lnpoco2（corr≈0.31），说明 lnpoco2 是用
+*    另一套(更早的)污染指数构造的。因此【不能】用 poll_idx*co2 重建，否则测的是另一个变量。
+*    正确做法：直接从真实DV出发。lnpoco2=ln(EPI_true×CO2)，减去 ln(GDP) 即得
+*    ln(EPI_true×CO2/GDP)=ln(EPI×CEI)，恰是标杆 SEM=EPI×CEI 的碳强度口径。
+gen double lnpoco2_int    = lnpoco2     - ln(gdp)   // 协同排放(碳强度口径, 由真实DV构造)
+gen double lnpoco2so2_int = lnpoco2_so2 - ln(gdp)   // SO2口径的碳强度版
+label var lnpoco2_int    "协同排放SEM(碳强度口径,ln)"
+label var lnpoco2so2_int "协同排放SEM_SO2(碳强度口径,ln)"
 
 * A.2 三口径并列稳健性表：总量口径(主) / SO2口径 / 碳强度口径(标杆同款)
 eststo clear
-eststo a1: reghdfe lnpoco2     DID $CTRL, a(city_code year) vce(cl city_code)   // 主口径(CO2总量×EPI)
-eststo a2: reghdfe lnpoco2_so2 DID $CTRL, a(city_code year) vce(cl city_code)   // SO2口径
-eststo a3: reghdfe lnsem_int   DID $CTRL, a(city_code year) vce(cl city_code)   // 碳强度口径(标杆)
-esttab a1 a2 a3 using "results/表A_SEM口径重构(对标标杆).rtf", replace ///
+eststo a1: reghdfe lnpoco2        DID $CTRL, a(city_code year) vce(cl city_code)   // 主口径(总量)
+eststo a2: reghdfe lnpoco2_so2    DID $CTRL, a(city_code year) vce(cl city_code)   // SO2口径(总量)
+eststo a3: reghdfe lnpoco2_int    DID $CTRL, a(city_code year) vce(cl city_code)   // 碳强度口径(标杆同款)
+eststo a4: reghdfe lnpoco2so2_int DID $CTRL, a(city_code year) vce(cl city_code)   // SO2碳强度口径
+esttab a1 a2 a3 a4 using "results/表A_SEM口径重构(对标标杆).rtf", replace ///
     b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID) ///
-    mtitles("CO2总量×EPI(主)" "SO2口径" "碳强度×EPI(标杆同款)") ///
+    mtitles("总量(主)" "SO2总量" "碳强度×EPI(标杆同款)" "SO2碳强度") ///
     stats(N r2_a, fmt(%9.0f %9.3f) labels("N" "Adj.R2")) nogaps compress ///
     title("表A 协同排放SEM多口径重构：对标 Wang & Fang (2026) 交乘法") ///
     addnotes("SEM=CEI×EPI(交乘法, Wang&Fang 2026 式1); CEI=CO2/GDP为碳强度; 越小越好。三口径下DID均显著为负,支撑结论稳健。")
@@ -48,7 +52,7 @@ eststo clear
 *   分四个时段 P1(2003-08) P2(08-13) P3(13-18) P4(18-23)
 *==============================================================================*
 preserve
-gen sem = poll_idx * co2_wt        // 与 lnpoco2 同底的 SEM 水平值(总量口径)
+gen sem = exp(lnpoco2)             // ⚠️ 用真实DV回推SEM水平值(勿用poll_idx*co2,后者与主DV不一致)
 * 取每个时段端点值
 gen byte ep = .
 replace ep = 1 if inlist(year,2003,2008,2013,2018,2023)
@@ -82,9 +86,8 @@ preserve
 xtset city_code year
 * 注意：D. 算子不能套函数(D.ln() 会报错)。须先生成对数变量，再对其差分。
 gen double lgdp = ln(gdp)
-gen double lsem = ln(poll_idx*co2_wt)
 gen double g_gdp = D.lgdp
-gen double g_sem = D.lsem
+gen double g_sem = D.lnpoco2        // ⚠️ 用真实DV差分,勿用poll_idx*co2
 gen byte strong_decouple = (g_gdp>0 & g_sem<0) if !missing(g_gdp,g_sem)   // 年度强脱钩=1
 eststo clear
 eststo dec: reghdfe strong_decouple DID $CTRL, a(city_code year) vce(cl city_code)
