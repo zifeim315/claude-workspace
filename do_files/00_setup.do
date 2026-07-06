@@ -70,6 +70,7 @@ label var neep_city    "节能减排(碳披露)示范城市"
 label var tourhub_city "旅游枢纽/优秀旅游城市"
 
 *--- Tapio 脱钩变量 ---*
+xtset city_code year                 // 重新排序:前面 bysort year 改变了排序,时序算子 D. 需按 city_code year 排序
 gen double d_env = D.lnpoco2
 gen double d_gdp = D.lnpgdp
 gen double tapio = d_env/d_gdp
@@ -94,5 +95,6 @@ label var far_cap "距省会较远"
 label var rich4a  "旅游资源丰度(4A密度高)"
 label var hitech  "数字/科技本底高"
 
+xtset city_code year                 // 保存前恢复面板排序,确保各模块载入后时序算子(L./D.)可用
 save "results/_work.dta", replace
 di as result "== 00_setup 完成：results/_work.dta 已就绪，全局宏 CTRL/CTRLns 已设定 =="
