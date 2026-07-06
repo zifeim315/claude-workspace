@@ -17,7 +17,15 @@ xtset city_code year
 
 *--- 控制变量与固定效应识别单元 ---*
 cap gen double lnfin = ln(fin)
-label var lnfin "金融发展水平(存贷余额/GDP,对数)"
+* 统一给8个控制变量加简洁标签(否则 esttab 的 label 选项会让有标签的 lnfin 显示中文长名、其余显示英文名,造成“像是缺了lnfin”的错觉)
+label var lnpgdp    "lnpgdp 经济发展"
+label var lndensity "lndensity 人口密度"
+label var urban     "urban 城镇化"
+label var struc2    "struc2 产业结构"
+label var gov       "gov 政府干预"
+label var tech      "tech 科技投入"
+label var human     "human 人力资本"
+label var lnfin     "lnfin 金融发展"
 global CTRL   "lnpgdp lndensity urban struc2 gov tech human lnfin"   // 全控制(8个)
 global CTRLns "lnpgdp lndensity urban gov tech human lnfin"          // 剔除结构变量(用于结构类机制)
 cap egen prov = group(province)

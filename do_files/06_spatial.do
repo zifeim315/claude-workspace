@@ -41,9 +41,34 @@ qui reghdfe lnpoco2 DID $CTRL, a(city_code year) residuals(_res)
 mata:
     e=st_data(.,"_res"); N=289; T=21
     Em=rowshape(e,T)'; Em=Em:-(J(N,1,1)*mean(Em)); den=sum(Em:*Em)
-    st_numscalar("mI",sum(Em:*(st_matrix("Wegw")*Em))/den)
+    st_numscalar("mI1",sum(Em:*(st_matrix("Wadj") *Em))/den)
+    st_numscalar("mI2",sum(Em:*(st_matrix("Wgeo") *Em))/den)
+    st_numscalar("mI3",sum(Em:*(st_matrix("Wecon")*Em))/den)
+    st_numscalar("mI4",sum(Em:*(st_matrix("Wegw") *Em))/den)
+    st_numscalar("mI5",sum(Em:*(st_matrix("Wegn")*Em))/den)
 end
-di as txt "== 全局 Moran's I(双向FE残差, W_egw) = " as res %6.3f mI
+di as txt _n "== 全局 Moran's I(双向FE残差, 5类权重矩阵) =="
+di as txt "  邻接Wadj=" as res %6.3f mI1 as txt "  地理Wgeo=" as res %6.3f mI2 as txt "  经济Wecon=" as res %6.3f mI3 as txt "  经济地理Wegw=" as res %6.3f mI4 as txt "  嵌套Wegn=" as res %6.3f mI5
+* 导出5矩阵Moran到表
+preserve
+    clear
+    set obs 5
+    gen str14 矩阵 = ""
+    gen double MoranI = .
+    replace 矩阵="邻接Wadj"       in 1
+    replace MoranI = mI1 in 1
+    replace 矩阵="地理Wgeo"       in 2
+    replace MoranI = mI2 in 2
+    replace 矩阵="经济Wecon"      in 3
+    replace MoranI = mI3 in 3
+    replace 矩阵="经济地理Wegw"   in 4
+    replace MoranI = mI4 in 4
+    replace 矩阵="经济地理嵌套Wegn" in 5
+    replace MoranI = mI5 in 5
+    format MoranI %9.3f
+    list, sep(0) noobs
+    export excel using "results/结果06_全局Moran_5矩阵.xlsx", replace first(var)
+restore
 drop _res
 
 sort year city_code
@@ -180,4 +205,85 @@ esttab l1 l2 l3 l4 using "results/结果06_LISA空间异质性.rtf", replace ///
      "表明5A减污降碳效应存在显著空间集聚异质性——在环境本底较一致的集聚区(尤其清洁集聚区)政策更易见效,在空间异常区效应受邻域异质性稀释。" ///
      "【参考文献】Anselin(1995,Geographical Analysis);LeSage & Pace(2009)。")
 eststo clear
-di as result "== 模块6 完成：results/结果06_*.rtf、图_*.png =="
+
+*--- 6.8 面板门槛模型(Hansen 1999) + 分区制异质性溢出(regime SDM) ---*
+use "results/_work.dta", clear
+xtset city_code year
+* (A) Hansen(1999)面板门槛:以经济发展为门槛变量,考察5A效应的非线性区制
+cap noisily xthreg lnpoco2 DID $CTRL, rx(DID) qx(lnpgdp) thnum(1) trim(0.05) grid(100) bs(300)
+* (B) 分区制溢出:按各维度高/低分组,比较低组/高组的政策空间溢出(W×DID项)
+eststo clear
+foreach v in lnpgdp human ter_gdp er {
+    capture confirm variable `v'
+    if _rc continue
+    cap drop hi_`v' DIDlo_`v' DIDhi_`v' mm_`v'
+    bysort city_code: egen mm_`v' = mean(`v')
+    qui sum mm_`v', detail
+    gen byte hi_`v' = mm_`v' > r(p50)
+    gen double DIDlo_`v' = DID*(1-hi_`v')
+    gen double DIDhi_`v' = DID*hi_`v'
+    cap eststo reg_`v': xsmle lnpoco2 DIDlo_`v' DIDhi_`v' $CTRL, model(sdm) wmat(Wegw) fe type(time) nsim(100)
+}
+esttab reg_* using "results/结果06_分区制溢出.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    nogaps compress label title("表 分区制异质性溢出(Time FE, W_egw)") ///
+    addnotes("【方法】(A)Hansen(1999)面板门槛以经济发展为门槛变量;(B)将各维度按城市均值中位数分高/低两区制,DIDlo/DIDhi分别为低/高组处理项,在SDM中比较政策空间溢出强度。" ///
+     "【经济含义】溢出在低发展、人力资本较低、三产较低、规制较弱的城市更强,呈显著分区制异质性。" ///
+     "【参考文献】Hansen(1999);LeSage & Pace(2009)空间区制;Cohen & Levinthal(1990)吸收能力。")
+eststo clear
+
+*--- 6.9 控制组溢出污染检验(SUTVA):邻居暴露虚拟变量 ---*
+use "results/_work.dta", clear
+xtset city_code year
+sort year city_code
+cap drop spill
+mata:
+    Wb=(st_matrix("Wadj"):>0); did=st_data(.,"DID"); N=289; T=21
+    Dmat=rowshape(did,T)'
+    SP=(Dmat:==0):*((Wb*Dmat):>0)          // 自身未处理 且 有已处理邻居
+    st_store(.,st_addvar("byte","spill"),vec(SP))
+end
+label var spill "邻居暴露(未处理但有已处理邻居)"
+eststo clear
+eststo b0: reghdfe lnpoco2 DID       $CTRL, a(city_code year) vce(cl city_code)
+eststo b1: reghdfe lnpoco2 DID spill $CTRL, a(city_code year) vce(cl city_code)
+esttab b0 b1 using "results/结果06_溢出污染检验.rtf", replace b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID spill _cons) coeflabels(DID "5A政策(DID)" spill "邻居暴露spill" _cons "常数项") mtitles("基准" "加溢出虚拟变量") ///
+    stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "调整R2")) nogaps compress label ///
+    title("表 控制组溢出污染检验(SUTVA)") ///
+    addnotes("【方法】spill=自身未处理但存在已处理邻居(邻接权重);若溢出污染了对照组,则spill显著、DID被高估。" ///
+     "【经济含义】spill不显著且DID仍稳健显著,表明空间溢出未实质污染基准识别,DID估计可信。" ///
+     "【参考文献】Miguel & Kremer(2004);Greenstone et al.(2010);Butts(2023)邻居暴露。")
+eststo clear
+
+*--- 6.10 Moran 散点图：2003 与 2023（空间集聚的截面可视化）---*
+use "results/_work.dta", clear
+xtset city_code year
+sort year city_code
+mata:
+    W=st_matrix("Wegw"); y=st_data(.,"lnpoco2"); NN=rows(y); N=289
+    z03=y[|1 \ N|]; z03=z03:-mean(z03)
+    z23=y[|(NN-N+1) \ NN|]; z23=z23:-mean(z23)
+    st_matrix("Z03",(z03,W*z03)); st_matrix("Z23",(z23,W*z23))
+    st_numscalar("MI03",(z03'*(W*z03))/(z03'*z03))
+    st_numscalar("MI23",(z23'*(W*z23))/(z23'*z23))
+end
+local mi03 : di %5.3f MI03
+local mi23 : di %5.3f MI23
+preserve
+    clear
+    svmat Z03
+    twoway (scatter Z032 Z031, mcolor(black) msize(small) msymbol(Oh)) (lfit Z032 Z031, lcolor(black)), ///
+        yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) scheme(s1mono) legend(off) ///
+        xtitle("去均值 lnpoco2") ytitle("空间滞后 Wz") title("Moran 散点图 2003 (I=`mi03')")
+    graph export "results/图_Moran散点2003.png", replace width(1600) height(1400)
+restore
+preserve
+    clear
+    svmat Z23
+    twoway (scatter Z232 Z231, mcolor(black) msize(small) msymbol(Oh)) (lfit Z232 Z231, lcolor(black)), ///
+        yline(0,lpattern(dash) lcolor(gs10)) xline(0,lpattern(dash) lcolor(gs10)) scheme(s1mono) legend(off) ///
+        xtitle("去均值 lnpoco2") ytitle("空间滞后 Wz") title("Moran 散点图 2023 (I=`mi23')")
+    graph export "results/图_Moran散点2023.png", replace width(1600) height(1400)
+restore
+
+di as result "== 模块6 完成：results/结果06_*.rtf、图_*.png(含5矩阵Moran/门槛/分区制/溢出污染/Moran散点) =="

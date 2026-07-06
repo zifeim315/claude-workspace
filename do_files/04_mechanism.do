@@ -57,11 +57,13 @@ di as text "{hline 92}"
 * 4.2 Bootstrap 间接效应（百分位95%置信区间，500次，城市聚类重抽样）
 *   稳健于中介效应非正态；95%CI不含0 即间接效应显著。
 *------------------------------------------------------------------------------*
+*   注：城市聚类重抽样会使同一城市被抽多次而产生“重复面板ID”，故用 idcluster(newid)
+*       为每次抽到的城市赋唯一新ID,并在 reghdfe 中吸收 newid(而非 city_code),避免 r(451)。
 cap program drop bootmed
 program bootmed, rclass
-    reghdfe ${med} DID ${cc}, a(city_code year)
+    reghdfe ${med} DID ${cc}, a(newid year)
     local a = _b[DID]
-    reghdfe lnpoco2 DID ${med} ${cc}, a(city_code year)
+    reghdfe lnpoco2 DID ${med} ${cc}, a(newid year)
     return scalar ind = `a'*_b[${med}]
 end
 tempname BM
@@ -80,7 +82,7 @@ foreach row of local MECH {
     else            global cc "$CTRLns"
     global med "`med'"
     use "results/_work.dta", clear
-    qui bootstrap ind=r(ind), reps(500) seed(20250624) cluster(city_code) ///
+    qui bootstrap ind=r(ind), reps(500) seed(20250624) cluster(city_code) idcluster(newid) ///
         saving("results/_br`bi'.dta", replace) nodots: bootmed
     scalar pe = _b[ind]
     preserve
