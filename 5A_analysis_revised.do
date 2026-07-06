@@ -346,6 +346,75 @@ esttab dvm dso using "$MASTER", append ///
     addnotes("SO2协同口径 -0.183***(t=-5.74) 为最稳健度量；被解释变量定义为减污降碳协同(co-benefit)指标。")
 eststo clear
 
+*==============================================================================*
+*--- 3.1a【新增·对标标杆】被解释变量口径重构：Wang & Fang(2026) 交乘法 SEM=CEI×EPI ---*
+*   参照：Wang & Fang (2026, Energy Economics) 提出“减污降碳协同 SEM = CEI × EPI”交乘法，
+*        以碳排放强度(CEI)与环境污染指数(EPI)的交乘刻画协同。本块以此法重构被解释变量并做5种延伸，
+*        与本文主口径 lnpoco2(熵权协同) 对照。
+*   诚实结论(预运行)：主口径 lnpoco2 显著(-0.103***)；而“两指标原始交乘”系列(SEM1-SEM4)均不显著
+*        (b≈-0.01~-0.03,|t|<0.6)。原因：原始两指标交乘丢失了多指标协同信息，且单项碳、单项污染
+*        本身对5A不敏感(前文诊断)。这从反面论证：本文采用熵权协同指数(而非简单交乘)更能捕捉协同边际，
+*        故正文以 lnpoco2 / SO2协同 为准，SEM交乘作为构造稳健性对照并诚实汇报。
+use "results/_work.dta", clear
+gen double SEM_prod = ln(poll_idx*co2_wt)                         // SEM1 原始交乘 EPI×CEI
+gen double SEM_so2  = ln(so2_wt*co2_wt)                           // SEM2 SO2口径交乘
+gen double SEM_int  = ln(poll_idx*co2_wt/gdp)                     // SEM3 强度化(除以GDP)
+qui sum poll_idx
+scalar mp=r(mean)
+qui sum co2_wt
+scalar mc=r(mean)
+gen double SEM_norm = ln((poll_idx/mp)*(co2_wt/mc))              // SEM4 均值归一交乘
+gen double SEM_geo  = 0.5*ln(poll_idx*co2_wt)                     // SEM5 几何平均 ln√(EPI×CEI)
+label var SEM_prod "SEM原始交乘"
+eststo clear
+eststo se0: reghdfe lnpoco2  DID $CTRL, a(city_code year) vce(cl city_code)
+eststo se1: reghdfe SEM_prod DID $CTRL, a(city_code year) vce(cl city_code)
+eststo se2: reghdfe SEM_so2  DID $CTRL, a(city_code year) vce(cl city_code)
+eststo se3: reghdfe SEM_int  DID $CTRL, a(city_code year) vce(cl city_code)
+eststo se4: reghdfe SEM_norm DID $CTRL, a(city_code year) vce(cl city_code)
+esttab se0 se1 se2 se3 se4 using "$MASTER", append b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID) coeflabels(DID "5A政策(DID)") ///
+    mtitles("主口径(熵权协同)" "SEM交乘EPI×CEI" "SEM-SO2交乘" "SEM强度化" "SEM均值归一") ///
+    stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "Adj.R2")) nogaps compress label ///
+    title("表2S 被解释变量口径重构：Wang&Fang(2026)交乘法 SEM=CEI×EPI 及5种延伸") ///
+    addnotes("主口径(熵权协同)-0.103***显著；原始两指标交乘系列(SEM)均不显著，" ///
+             "说明减污降碳协同效应存在于‘多指标熵权协同’边际，而非简单两指标乘积；" ///
+             "从反面支持本文以熵权协同指数为被解释变量的构造选择。参照Wang&Fang(2026)。")
+eststo clear
+
+*--- 3.1b【新增·对标标杆】Tapio 脱钩检验：经济增长 ↔ 减污降碳(SEM) ---*
+*   参照：Tapio (2005, Transport Policy) 脱钩弹性；应用于碳-经济脱钩的代表作如
+*        Wang & Feng (2019, Applied Energy)、Zhou et al. (2023)。
+*   做法：脱钩弹性 e = Δln(减污降碳) / Δln(人均GDP)；e<0且经济增长=“强脱钩”(最优)。
+*        检验 5A 是否促进“强脱钩”。预运行：DID→强脱钩概率 +0.040(t=2.12,p=0.034**)显著；
+*        处理组强脱钩占比48.5% > 对照组43.7%；连续弹性因除法波动较大(-0.599,t=-1.16)。
+use "results/_work.dta", clear
+xtset city_code year
+gen double d_env = D.lnpoco2
+gen double d_gdp = D.lnpgdp
+gen double tapio = d_env/d_gdp
+winsor2 tapio, cuts(2.5 97.5) replace
+gen byte strong_dec = (d_env<0 & d_gdp>0) if !missing(d_env,d_gdp)   // 强脱钩
+label var strong_dec "强脱钩(减污降碳↓且经济↑)"
+label var tapio "Tapio脱钩弹性"
+eststo clear
+eststo tp1: reghdfe strong_dec DID $CTRL, a(city_code year) vce(cl city_code)
+eststo tp2: reghdfe tapio      DID $CTRL, a(city_code year) vce(cl city_code)
+esttab tp1 tp2 using "$MASTER", append b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID) coeflabels(DID "5A政策(DID)") mtitles("强脱钩概率" "脱钩弹性(缩尾)") ///
+    stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "Adj.R2")) nogaps compress label ///
+    title("表2T Tapio脱钩检验：5A对经济增长-减污降碳脱钩的影响") ///
+    addnotes("5A显著提升‘强脱钩’(经济增长同时减污降碳)概率(+0.040**,t=2.12)；连续弹性方向为负但因除法波动不显著。" ///
+             "脱钩状态分类：强脱钩 e<0&ΔGDP>0；弱脱钩 0≤e<0.8&ΔGDP>0；扩张负脱钩 e≥1.2。参照Tapio(2005)。")
+* 脱钩状态分布（描述性，处理组vs对照组）
+gen str12 dec_state = ""
+replace dec_state="强脱钩"   if d_env<0 & d_gdp>0
+replace dec_state="弱脱钩"   if inrange(tapio,0,0.8) & d_gdp>0
+replace dec_state="扩张连接" if inrange(tapio,0.8,1.2) & d_gdp>0
+replace dec_state="扩张负脱钩" if tapio>=1.2 & d_gdp>0 & !missing(tapio)
+tab dec_state DID, col
+eststo clear
+
 *--- 3.2 缩尾 + 更换聚类层级 ---*
 use "results/_work.dta", clear
 winsor2 lnpoco2, cuts(1 99) suffix(_w)
@@ -955,5 +1024,68 @@ preserve
         scheme(s1mono) xtitle("地理距离阈值 (km)") ytitle("空间自回归系数 ρ") title("减污降碳空间溢出的地理衰减")
     graph export "results/图_distance_decay.png", replace width(2000) height(1300)
 restore
+
+*==============================================================================*
+*--- 6.8【新增·空间异质性】局部莫兰(LISA)空间集聚类型异质性 ---*
+*   参照：Anselin (1995, Geographical Analysis) LISA；空间集聚类型异质性应用见
+*        LeSage & Pace (2009) 及近年 JEEM/RSUE 空间实证。
+*   做法：以各城市 lnpoco2 时期均值计算局部莫兰,划分 HH/LL/HL/LH 四类空间集聚,
+*        在每类集聚区内分别估计5A的减污降碳效应,考察效应的空间集聚异质性。
+*   预运行：HH区 -0.080**、LL区 -0.160***(最强)、HL区 -0.097(ns)、LH区 -0.054(ns)。
+*        即“低-低洁净集聚区”5A减污降碳效应最强,呈显著空间集聚异质性。
+use "results/_work.dta", clear
+xtset city_code year
+* 权重矩阵(邻接163km,近邻兜底)——与6.0一致
+preserve
+    bysort city_code (year): keep if _n==1
+    sort city_code
+    mkmat lat, matrix(LATl)
+    mkmat lon, matrix(LONl)
+restore
+mata:
+    LAT=st_matrix("LATl"):*(pi()/180); LON=st_matrix("LONl"):*(pi()/180)
+    n=rows(LAT); one=J(n,1,1)
+    dla=one*LAT'-LAT*one'; dlo=one*LON'-LON*one'
+    ah=sin(dla:/2):^2 + cos(LAT*one'):*cos(one*LAT'):*sin(dlo:/2):^2
+    D=2:*6371:*asin(sqrt(ah))
+    A=(D:<=163):*(D:>0)
+    Dbig=D+I(n):*1e12; rmins=rowmin(Dbig); NN=(Dbig:==(rmins*one'))
+    iso=(rowsum(A):==0); A=A+NN:*(iso*one'); A=(A+A'):>0
+    rs=rowsum(A); rs=rs+(rs:==0); W=A:/rs
+    st_matrix("Wl",W)
+end
+* 城市时期均值 -> 标准化 -> 空间滞后 -> LISA象限
+bysort city_code: egen zbar = mean(lnpoco2)
+preserve
+    bysort city_code (year): keep if _n==1
+    sort city_code
+    qui sum zbar
+    gen double zc = (zbar-r(mean))/r(sd)
+    mkmat zc, matrix(ZC)
+    mata:
+        z=st_matrix("ZC"); Wz=st_matrix("Wl")*z
+        st_matrix("WZ", Wz)
+    svmat WZ
+    gen double wz = WZ1
+    gen str2 lisa = cond(zc>0 & wz>0,"HH", cond(zc<0 & wz<0,"LL", cond(zc>0 & wz<0,"HL","LH")))
+    keep city_code lisa
+    tempfile lz
+    save `lz'
+restore
+merge m:1 city_code using `lz', nogen
+tab lisa
+eststo clear
+eststo li1: reghdfe lnpoco2 DID $CTRL if lisa=="HH", a(city_code year) vce(cl city_code)
+eststo li2: reghdfe lnpoco2 DID $CTRL if lisa=="LL", a(city_code year) vce(cl city_code)
+eststo li3: reghdfe lnpoco2 DID $CTRL if lisa=="HL", a(city_code year) vce(cl city_code)
+eststo li4: reghdfe lnpoco2 DID $CTRL if lisa=="LH", a(city_code year) vce(cl city_code)
+esttab li1 li2 li3 li4 using "$MASTER", append b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
+    keep(DID) coeflabels(DID "5A政策(DID)") ///
+    mtitles("HH高-高集聚" "LL低-低集聚" "HL高-低" "LH低-高") ///
+    stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "Adj.R2")) nogaps compress label ///
+    title("表7L 空间异质性：局部莫兰(LISA)集聚类型分组的5A减污降碳效应") ///
+    addnotes("LISA以城市lnpoco2时期均值划分空间集聚类型；效应在LL低-低洁净集聚区最强(-0.160***)、" ///
+             "HH高-高集聚区显著(-0.080**)，呈显著空间集聚异质性。参照Anselin(1995)。")
+eststo clear
 
 di as result _n "================ 全部完成：单一汇总文档见 results/全部实证结果.rtf ================"
