@@ -67,7 +67,7 @@ forvalues k=1/9 {
         }
     }
     esttab A B using "results/结果05_异质性_`k'.rtf", replace ///
-        b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID $CTRL) order(DID) coeflabels(DID "5A政策(DID)") ///
+        b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID $CTRL _cons) order(DID) coeflabels(DID "5A政策(DID)" _cons "常数项") ///
         mtitles("`l1'" "`l2'") ///
         stats(fe N r2_a, fmt(%s %9.0f %9.3f) labels("城市/年FE" "观测值N" "调整R2")) ///
         nogaps compress label title("表8-`no' 异质性:`no'") ///

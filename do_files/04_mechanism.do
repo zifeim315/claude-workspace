@@ -52,4 +52,57 @@ foreach row of local MECH {
     eststo clear
 }
 di as text "{hline 92}"
-di as result "== 模块4 完成：results/结果04_机制_*.rtf(五条机制各一表) =="
+
+*------------------------------------------------------------------------------*
+* 4.2 Bootstrap 间接效应（百分位95%置信区间，500次，城市聚类重抽样）
+*   稳健于中介效应非正态；95%CI不含0 即间接效应显著。
+*------------------------------------------------------------------------------*
+cap program drop bootmed
+program bootmed, rclass
+    reghdfe ${med} DID ${cc}, a(city_code year)
+    local a = _b[DID]
+    reghdfe lnpoco2 DID ${med} ${cc}, a(city_code year)
+    return scalar ind = `a'*_b[${med}]
+end
+tempname BM
+postfile `BM' str16 mech double(ind lo hi) using "results/_bootmed.dta", replace
+di as result _n "{hline 74}"
+di as text %-14s "机制(中介)" %12s "间接效应a*b" %14s "Boot 95%CI下" %14s "Boot 95%CI上" "  显著"
+di as text "{hline 74}"
+local bi = 0
+foreach row of local MECH {
+    gettoken tag row : row
+    gettoken med row : row
+    gettoken cid row : row
+    gettoken hyp row : row
+    local ++bi
+    if "`cid'"=="CF" global cc "$CTRL"
+    else            global cc "$CTRLns"
+    global med "`med'"
+    use "results/_work.dta", clear
+    qui bootstrap ind=r(ind), reps(500) seed(20250624) cluster(city_code) ///
+        saving("results/_br`bi'.dta", replace) nodots: bootmed
+    scalar pe = _b[ind]
+    preserve
+        use "results/_br`bi'.dta", clear          // 自抽样重复值,手工求百分位CI(稳健)
+        _pctile ind, p(2.5 97.5)
+        scalar lo = r(r1)
+        scalar hi = r(r2)
+    restore
+    local sig = cond(lo*hi>0,"显著","不显著")
+    post `BM' ("`tag'") (pe) (lo) (hi)
+    di as text %-14s "`tag'" as result %12.4f pe %14.4f lo %14.4f hi as text "  `sig'"
+}
+postclose `BM'
+di as text "{hline 74}"
+* 导出 Bootstrap 结果表
+preserve
+    use "results/_bootmed.dta", clear
+    format ind lo hi %9.4f
+    gen CI = "[" + string(lo,"%6.4f") + ", " + string(hi,"%6.4f") + "]"
+    gen sig = cond(lo*hi>0,"显著(不含0)","不显著")
+    list mech ind CI sig, sep(0) noobs
+    export excel mech ind lo hi CI sig using "results/结果04_机制Bootstrap.xlsx", replace first(var)
+restore
+
+di as result "== 模块4 完成：results/结果04_机制_*.rtf 与 结果04_机制Bootstrap.xlsx =="

@@ -47,9 +47,10 @@ estadd local FEry "—":c6
 estadd local FEpy "是":c6
 estadd local TR "是":c6
 
+di as result "★本回归控制变量($CTRL 共8个)：$CTRL"   // 诊断:确认8个控制变量(含lnfin)全部纳入
 esttab c1 c2 c3 c4 c5 c6 using "results/结果02_基准回归.rtf", replace ///
     b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) ///
-    keep(DID $CTRL) order(DID $CTRL) coeflabels(DID "5A政策(DID)") ///
+    keep(DID $CTRL _cons) order(DID $CTRL _cons) coeflabels(DID "5A政策(DID)" _cons "常数项") ///
     mtitles("(1)" "(2)" "(3)" "(4)" "(5)" "(6)") ///
     scalars("FEcy 城市固定效应" "FEyr 年份固定效应" "FEry 区域×年固定效应" "FEpy 省份×年固定效应" "TR 城市线性趋势") ///
     stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "调整R2")) ///
@@ -74,8 +75,12 @@ use "results/_work.dta", clear
 gen rel = year - action
 replace rel = -4 if rel < -4 & !missing(rel)
 replace rel =  4 if rel >  4 & !missing(rel)
-forvalues k = 2/4 { gen lead`k' = (rel == -`k') }
-forvalues k = 0/4 { gen lag`k'  = (rel ==  `k') }
+forvalues k = 2/4 {
+    gen lead`k' = (rel == -`k')
+}
+forvalues k = 0/4 {
+    gen lag`k'  = (rel ==  `k')
+}
 reghdfe lnpoco2 lead4 lead3 lead2 lag0 lag1 lag2 lag3 lag4 $CTRL, a(city_code provyear) vce(cl city_code)
 cap postclose es
 postfile es double(rel coef lo hi) using "results/_es_tmp.dta", replace
