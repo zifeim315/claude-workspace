@@ -133,20 +133,25 @@ eststo clear
 *   本文核心结论:减污降碳效应特定于“顶级5A”,而非“任何景区升级”。数据所限,不宜强行做成显著。
 *------------------------------------------------------------------------------*
 use "results/_work.dta", clear
+* 5A累计数量强度(连续DID)：ln(1+城市累计已获评5A数量)
+bysort city_code (year): gen num5a_cum = sum(num5a_new)
+gen double lndid_cont = ln(1 + num5a_cum)
+label var lndid_cont "5A累计数量强度ln(1+累计5A数)"
 eststo clear
-eststo i1: reghdfe lnpoco2 DID   $CTRL if treat==1,    a(city_code year) vce(cl city_code)
-eststo i2: reghdfe lnpoco2 DID4A $CTRL,                a(city_code year) vce(cl city_code)
-eststo i3: reghdfe lnpoco2 DID4A $CTRL if und4a==0,    a(city_code year) vce(cl city_code)
-esttab i1 i2 i3 using "results/结果03_5_替换处理.rtf", replace ///
-    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID DID4A _cons) ///
-    coeflabels(DID "5A政策(DID)" DID4A "4A政策(DID4A)" _cons "常数项") ///
-    mtitles("仅5A处理组" "4A替换·全样本" "4A替换·干净对照") ///
+eststo i1: reghdfe lnpoco2 DID        $CTRL if treat==1, a(city_code year) vce(cl city_code)
+eststo i2: reghdfe lnpoco2 lndid_cont $CTRL,             a(city_code year) vce(cl city_code)
+eststo i3: reghdfe lnpoco2 DID4A      $CTRL,             a(city_code year) vce(cl city_code)
+eststo i4: reghdfe lnpoco2 DID4A      $CTRL if und4a==0, a(city_code year) vce(cl city_code)
+esttab i1 i2 i3 i4 using "results/结果03_5_替换处理.rtf", replace ///
+    b(%9.3f) t(%9.3f) star(* 0.1 ** 0.05 *** 0.01) keep(DID lndid_cont DID4A _cons) ///
+    coeflabels(DID "5A政策(DID)" lndid_cont "5A累计数量强度" DID4A "4A政策(DID4A)" _cons "常数项") ///
+    mtitles("仅5A处理组" "5A累计数量强度" "4A替换·全样本" "4A替换·干净对照") ///
     stats(N r2_a, fmt(%9.0f %9.3f) labels("观测值N" "调整R2")) nogaps compress label ///
-    title("表6 识别稳健性：替换核心解释变量(4A)") ///
-    addnotes("【各列含义】列(1)仅在5A处理城市内比较早/晚获评;列(2)将核心解释变量由5A(DID)直接换成4A(DID4A)全样本估计;列(3)剔除‘有4A无时点’城市作干净对照后再估。" ///
-     "【为何4A不显著及调整】4A评定时点仅约1/3有记录(可定时点仅41市),无时点城市被并入对照使系数向0衰减;剔除后系数由−0.061增大到−0.117、方向与5A一致但仍不显著——4A为次级品牌、可用样本小所致。" ///
-     "【经济含义】4A效应弱且不显著,恰支持‘减污降碳效应特定于顶级5A而非一般景区升级’;数据所限不宜强行显著。" ///
-     "【参考文献】He et al.(2025, JUE) 以4A可比城市为对照。")
+    title("表6 识别稳健性：替换核心解释变量（5A数量强度 / 4A）") ///
+    addnotes("【各列含义】(1)仅5A处理城市内早/晚获评比较;(2)把核心解释变量换成‘5A累计数量强度’ln(1+城市累计5A数);(3)换成4A政策(DID4A)全样本;(4)剔除‘有4A无时点’城市作干净对照。" ///
+     "【提示·5A累计数量强度】现有 num5a_new 为占位(仅首评年=1),累计后≈二值post,故(2)列系数≈基准的等比例缩放(−0.149***),尚非真正的‘剂量-反应’强度DID;并入‘城市-年-真实逐年新增5A数量’后方为完整强度DID。" ///
+     "【4A】4A方向与5A一致但偏弱不显著(时点仅41市+次级品牌),支持效应特定于顶级5A。" ///
+     "【参考文献】Callaway & Sant’Anna(2021)剂量DID;He et al.(2025, JUE) 4A可比城市对照。")
 eststo clear
 
 * 工具变量2SLS：移位-份额IV(风景名胜区存量×全国5A推广/时代趋势)，过度识别
